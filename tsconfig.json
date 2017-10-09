@@ -1,0 +1,21 @@
+{
+    "compileOnSave": true,
+    "compilerOptions": {
+        "declaration": true,
+        "emitDecoratorMetadata": true,
+        "experimentalDecorators": true,
+        "inlineSourceMap": true,
+        "lib": ["dom", "es2016", "es6", "scripthost"],
+        "module": "commonjs",
+        "noImplicitAny": true,
+        "outDir": "dist",
+        "preserveConstEnums": true,
+        "removeComments": false,
+        "strictNullChecks": true,
+        "target": "ES2016"
+    },
+    "exclude": [
+        "node_modules",
+        "dist"
+    ]
+}
