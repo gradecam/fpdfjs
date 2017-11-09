@@ -82,17 +82,17 @@ export interface GlyphMetrics {
 export interface FontMetrics {
     ascender: number;
     descender: number;
-    gap: number;
-    lineHeight: number;
+    gap?: number;
+    lineHeight?: number;
 }
 
 export class AFMData {
     type: FontType;
     fontMetrics: FontMetrics;
     glyphMetrics: GlyphMetrics[];
-    originalFileSize: number;
-    fileData: string;
-    descItems: FontDescItem[];
+    originalFileSize?: number;
+    fileData?: string;
+    descItems?: FontDescItem[];
 }
 
 export class CMAPRecord {
