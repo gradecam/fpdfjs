@@ -20,8 +20,8 @@ export class Font {
 
         // copy in the metrics for the whole font
         this.fontMetrics = afmData.fontMetrics;
-        this.fontDescItems = afmData.descItems;
-        this.fileOriginalSize = afmData.originalFileSize;
+        this.fontDescItems = afmData.descItems || [];
+        this.fileOriginalSize = afmData.originalFileSize || 0;
 
         const charCodeToWidth: {[charCode: number]: number} = {};        
         if(cmapData) {
@@ -47,7 +47,7 @@ export class Font {
         }
 
         this.fontIndex = index;
-        if(this.type == 'TrueType') {
+        if(this.type == 'TrueType' && afmData.fileData) {
             // console.log('afmData.fileData:', afmData.fileData);
             this.fileData = new Buffer(afmData.fileData, 'base64');
         }
