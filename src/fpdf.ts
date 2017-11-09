@@ -495,9 +495,11 @@ export class FPdf {
         }
         for(let fontKey of Object.keys(this._fonts)) {
             const font = this._fonts[fontKey];
-            const fontName = `AAAAAA+${font.name}-Regular`;
+            
+            let fontName;
             if(font.type == 'Core') {
                 // Core font
+                fontName = font.name;
                 font.objectNumber = this._newobj();
                 this._put('<</Type /Font');
                 this._put(`/BaseFont /${fontName}`);
@@ -510,6 +512,7 @@ export class FPdf {
                 }
 
                 // Additional Type1 or TrueType/OpenType font
+                fontName = `AAAAAA+${font.name}-Regular`;
                 font.objectNumber = this._newobj();
                 this._put('<</Type /Font');
                 this._put(`/BaseFont /${fontName}`);
