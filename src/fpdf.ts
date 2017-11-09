@@ -6,7 +6,7 @@ import * as helvetica from '../fonts/helvetica.afm.json';
 import * as times from '../fonts/times.afm.json';
 import * as adobeStandardEncoding from '../fonts/adobe-standard-encoding.cmap.json';
 
-import * as OpenSans from '../fonts/opensans.afm.json';
+// import * as OpenSans from '../fonts/opensans.afm.json';
 
 
 const typedAdobeStandardEncoding: font.CMAPData = <any>adobeStandardEncoding;
@@ -194,7 +194,10 @@ export class FPdf {
             if(args.length < 2) {
                 throw new Error("non-core fonts can't be added directly with a font key");
             }
-            this._fonts[fontKey] = new font.Font(fontIndex, args[0], <any>OpenSans);
+
+            // FIXME: this is obvioulsy messed up. Make it work
+            // this._fonts[fontKey] = new font.Font(fontIndex, args[0], <any>OpenSans);
+            throw new Error('make this work right');
         }
     }
 
