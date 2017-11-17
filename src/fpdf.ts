@@ -177,27 +177,37 @@ export class FPdf {
 
     addFont(fontKey: string): void;
     addFont(family: string, style: string): void;
+    addFont(family: string, style: string, file: string): void;
     addFont(...args: any[]): void {
-        let {fontKey, size} = this._extractSetFontArgs(args.concat([0]));
+        // let {fontKey, size} = this._extractSetFontArgs(args.concat([0]));
+        let fontKey: string;
+        let filename: string | undefined;
+        // console.log(args);
+        if(args.length == 1) {
+            fontKey = args[0];
+        } else if(args.length == 2) {
+            fontKey = this._getFontKey(args[0], args[1]);
+        } else if(args.length == 3) {
+            fontKey = this._getFontKey(args[0], args[1]);
+            filename = args[2];
+        } else {
+            throw new Error(`setFont requires either two or three aguments. You passed in ${args.length}`);
+        }
 
         // if the font is already loaded then we are done
         if(this._fonts[fontKey]) {
             return;
         }
 
-        const file = `fonts/${fontKey}.json`;
-
         const fontIndex = Object.keys(this._fonts).length + 1;
         if(this._coreFonts[fontKey]) {
             this._fonts[fontKey] = new font.Font(fontIndex, this._coreFonts[fontKey].name, this._coreFonts[fontKey].data, typedAdobeStandardEncoding);
         } else {
-            if(args.length < 2) {
-                throw new Error("non-core fonts can't be added directly with a font key");
+            if(!filename) {
+                throw new Error('you must pass filename for the .afm.json file that you want to use for this custom font');
             }
-
-            // FIXME: this is obvioulsy messed up. Make it work
-            // this._fonts[fontKey] = new font.Font(fontIndex, args[0], <any>OpenSans);
-            throw new Error('make this work right');
+            const afmDataBuffer = fs.readFileSync(filename);
+            this._fonts[fontKey] = new font.Font(fontIndex, args[0], JSON.parse(afmDataBuffer.toString()));
         }
     }
 
@@ -491,8 +501,8 @@ export class FPdf {
             this._put('/Filter /FlateDecode');
             this._put(`/Length1 ${font.fileOriginalSize}`);
             this._put('>>');
-            console.log('font.fileData.byteLength:', font.fileData.byteLength);
-            console.log('font.fileData.toString(binary).length:', font.fileData.toString('binary').length);
+            // console.log('font.fileData.byteLength:', font.fileData.byteLength);
+            // console.log('font.fileData.toString(binary).length:', font.fileData.toString('binary').length);
             this._putstream(font.fileData.toString('binary'));
             this._put('endobj');
         }
@@ -535,8 +545,23 @@ export class FPdf {
                 // Descriptor
                 this._newobj();
                 let fontDescriptor = `<</Type /FontDescriptor /FontName /${fontName}`;
-                for(const fontDescItem of font.fontDescItems) {
-                    fontDescriptor += ` /${fontDescItem.name} ${fontDescItem.value}`;
+                if(font.fontMetrics.ascender) {
+                    fontDescriptor += ` /Ascent ${font.fontMetrics.ascender}`;
+                }
+                if(font.fontMetrics.descender) {
+                    fontDescriptor += ` /Descent ${font.fontMetrics.descender}`;
+                }
+                if(font.fontMetrics.flags) {
+                    fontDescriptor += ` /Flags ${font.fontMetrics.flags}`;
+                }
+                if(font.fontMetrics.capHeight) {
+                    fontDescriptor += ` /CapHeight ${font.fontMetrics.capHeight}`;
+                }
+                if(font.fontMetrics.italicAngle) {
+                    fontDescriptor += ` /ItalicAngle ${font.fontMetrics.italicAngle}`;
+                }
+                if(font.fontMetrics.fontBBox) {
+                    fontDescriptor += ` /FontBBox [${font.fontMetrics.fontBBox[0]} ${font.fontMetrics.fontBBox[1]} ${font.fontMetrics.fontBBox[2]} ${font.fontMetrics.fontBBox[3]}]`;
                 }
                 fontDescriptor += ` /FontFile2 ${font.fileObjectNumber} 0 R`;
                 fontDescriptor += '>>';

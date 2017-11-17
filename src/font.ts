@@ -11,7 +11,7 @@ export class Font {
     fileObjectNumber: number; // FIXME: this should probably be an optional
     fileData: Buffer;
     fileOriginalSize: number;
-    fontDescItems: FontDescItem[] = [];
+    // fontDescItems: FontDescItem[] = [];
 
     constructor(index: number, name: string, afmData: AFMData, cmapData?: CMAPData) {
         // set the name of the font
@@ -20,7 +20,7 @@ export class Font {
 
         // copy in the metrics for the whole font
         this.fontMetrics = afmData.fontMetrics;
-        this.fontDescItems = afmData.descItems || [];
+        // this.fontDescItems = afmData.descItems || [];
         this.fileOriginalSize = afmData.originalFileSize || 0;
 
         const charCodeToWidth: {[charCode: number]: number} = {};        
@@ -82,6 +82,10 @@ export interface GlyphMetrics {
 export interface FontMetrics {
     ascender: number;
     descender: number;
+    flags?: number;
+    capHeight?: number;
+    italicAngle?: number;
+    fontBBox?: number[];
     gap?: number;
     lineHeight?: number;
 }
@@ -92,7 +96,7 @@ export class AFMData {
     glyphMetrics: GlyphMetrics[];
     originalFileSize?: number;
     fileData?: string;
-    descItems?: FontDescItem[];
+    // descItems?: FontDescItem[];
 }
 
 export class CMAPRecord {
