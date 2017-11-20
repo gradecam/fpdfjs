@@ -4,6 +4,7 @@ export class Font {
     type: FontType;
     name: string;
     fontMetrics: FontMetrics;
+    glyphMetrics: GlyphMetrics[];
     characterWidths: CharWidthMap = {};
     fontIndex: number; // FIXME: this should probably be an optional
     objectNumber: number; // FIXME: this should probably be an optional
@@ -20,6 +21,7 @@ export class Font {
 
         // copy in the metrics for the whole font
         this.fontMetrics = afmData.fontMetrics;
+        this.glyphMetrics = afmData.glyphMetrics;
         // this.fontDescItems = afmData.descItems || [];
         this.fileOriginalSize = afmData.originalFileSize || 0;
 
@@ -39,6 +41,7 @@ export class Font {
             // FIXME: this logic assumes that the font is encoded in ISO10646-1 (unicode)
             //        for a non unicode encoded font you will need a cmap
             for(const charData of afmData.glyphMetrics) {
+                // FIXME: is this line being used?
                 charCodeToWidth[charData.charCode] = charData.width;
 
                 const unicodeCharString = String.fromCharCode(charData.charCode);
@@ -88,6 +91,8 @@ export interface FontMetrics {
     fontBBox?: number[];
     gap?: number;
     lineHeight?: number;
+    missingWidth?: number;
+    stemV?: number;
 }
 
 export class AFMData {
@@ -96,6 +101,7 @@ export class AFMData {
     glyphMetrics: GlyphMetrics[];
     originalFileSize?: number;
     fileData?: string;
+    postScriptName?: string;
     // descItems?: FontDescItem[];
 }
 

@@ -1,10 +1,12 @@
 import * as fs from 'fs';
+import * as zlib from 'zlib';
+import * as StringDecoder from 'string_decoder';
 import * as font from './font';
-
 import * as courier from '../fonts/courier.afm.json';
 import * as helvetica from '../fonts/helvetica.afm.json';
 import * as times from '../fonts/times.afm.json';
 import * as adobeStandardEncoding from '../fonts/adobe-standard-encoding.cmap.json';
+// var arrayBufferToBuffer = require('arraybuffer-to-buffer');
 
 // import * as OpenSans from '../fonts/opensans.afm.json';
 
@@ -207,7 +209,8 @@ export class FPdf {
                 throw new Error('you must pass filename for the .afm.json file that you want to use for this custom font');
             }
             const afmDataBuffer = fs.readFileSync(filename);
-            this._fonts[fontKey] = new font.Font(fontIndex, args[0], JSON.parse(afmDataBuffer.toString()));
+            const afmData: font.AFMData = JSON.parse(afmDataBuffer.toString())
+            this._fonts[fontKey] = new font.Font(fontIndex, afmData.postScriptName || args[0], afmData);
         }
     }
 
@@ -257,6 +260,37 @@ export class FPdf {
         }
     }
 
+    _encodeText(s: string) {
+        // let octalString = '';
+        // for(let i = 0; i < s.length; i++) {
+        //     const code = s.charCodeAt(i);
+        //     const octal = code.toString(8);
+        //     octalString += `\\0\\${octal}`;
+        // }
+        // return octalString;
+        // // console.log('s:', s);
+        // const buffer = new Int8Array(s.length*2);
+        // for(let i = 0; i < s.length; i++) {
+        //     buffer[i*2] = 0;
+        //     buffer[i*2+1] = s.charCodeAt(i);
+        //     // console.log('char:', s.charCodeAt(i));
+        // }
+        const buffer = new Buffer(s.length*2);
+        for(let i = 0; i < s.length; i++) {
+            buffer[i*2] = 0;
+            buffer[i*2+1] = s.charCodeAt(i);
+            // console.log('char:', s.charCodeAt(i));
+        }
+        // console.log(buffer.toLocaleString());
+        // return buffer.toString();
+        // const buffer = new Buffer(s.length);
+        // const buffer = Buffer.from(s, 'utf16le');
+        // console.log(buffer.toString('binary'));
+        // console.log(buffer.toString('hex'));
+        return buffer.toString('binary');
+        // return s;
+    }
+
     text(x: number, y: number, text: string) {
         if(!this._currentFont) {
             throw new Error('No font has been set');
@@ -268,8 +302,7 @@ export class FPdf {
         // by default this PDF command will use the y value for the font baseline
         // we want to move it down so that the y value given here becomes the the top
         y -= this._currentFont.fontMetrics.ascender * this._currentFontSize / 1000;
-
-        const s = `BT ${x.toFixed(2)} ${y.toFixed(2)} Td (${text}) Tj ET`;
+        const s = `BT ${x.toFixed(2)} ${y.toFixed(2)} Td (${this._encodeText(text)}) Tj ET`;
         this._putToCurrentPage(s);
     }
 
@@ -501,8 +534,6 @@ export class FPdf {
             this._put('/Filter /FlateDecode');
             this._put(`/Length1 ${font.fileOriginalSize}`);
             this._put('>>');
-            // console.log('font.fileData.byteLength:', font.fileData.byteLength);
-            // console.log('font.fileData.toString(binary).length:', font.fileData.toString('binary').length);
             this._putstream(font.fileData.toString('binary'));
             this._put('endobj');
         }
@@ -519,54 +550,162 @@ export class FPdf {
                 this._put('/Subtype /Type1');
                 this._put('>>');
                 this._put('endobj');
-            } else if(font.type == 'Type1' || font.type == 'TrueType') {
-                if(font.type == 'Type1') {
-                    throw new Error('Embedded Type1 fonts are not actually supprted at this point');
-                }
+            } else if(font.type == 'TrueType') {
 
-                // Additional Type1 or TrueType/OpenType font
-                fontName = `AAAAAA+${font.name}-Regular`;
+                // Because this is a composit font and not just the straight TTF font we must append a code prefix to
+                // to the font name. It must be six capital letters but it could be anything. FPDFJS just happens to
+                // fit the bill :)
+                fontName = `FPDFJS+${font.name}`;
+
+                // Type0 Font
+                // A composite font - a font composed of other fonts, organized hierarchically
                 font.objectNumber = this._newobj();
                 this._put('<</Type /Font');
+                this._put(`/Subtype /Type0`);
                 this._put(`/BaseFont /${fontName}`);
-                this._put(`/Subtype /${font.type}`);
-                this._put('/FirstChar 32 /LastChar 255');
-                this._put(`/Widths ${font.objectNumber+1} 0 R`);
-                this._put(`/FontDescriptor ${font.objectNumber+2} 0 R`);
+                this._put(`/Encoding /Identity-H`);
+                this._put(`/DescendantFonts [${this._currentObjectNumber + 1} 0 R]`);
+                this._put(`/ToUnicode ${this._currentObjectNumber + 2} 0 R`);
                 this._put('>>');
                 this._put('endobj');
 
-                // Widths
+                // CIDFontType2
+                // A CIDFont whose glyph descriptions are based on TrueType font technology
                 this._newobj();
-                const charWidths: number[] = [];
-                this._put('[260 267 401 646 572 823 730 221 296 296 552 572 245 322 266 367 572 572 572 572 572 572 572 572 572 572 266 266 572 572 572 429 899 633 648 631 729 556 516 728 738 279 267 614 519 903 754 779 602 779 618 549 553 728 595 926 577 560 571 329 367 329 542 448 577 556 613 476 613 561 339 548 614 253 253 525 253 930 614 604 613 613 408 477 353 614 501 778 524 504 468 379 551 379 572 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 260 267 572 572 572 572 551 516 577 832 354 497 572 322 832 500 428 572 347 347 577 619 655 266 227 347 375 497 780 780 780 429 633 633 633 633 633 633 873 631 556 556 556 556 279 279 279 279 722 754 779 779 779 779 779 572 779 728 728 728 728 560 611 622 556 556 556 556 556 556 858 476 561 561 561 561 253 253 253 253 596 614 604 604 604 604 604 572 604 614 614 614 614 504 613 504 ]');
+                this._put(`<</Type /Font`);
+                this._put(`/Subtype /CIDFontType2`);
+                this._put(`/BaseFont /${fontName}`);
+                this._put(`/CIDSystemInfo ${this._currentObjectNumber + 2} 0 R`);
+                this._put(`/FontDescriptor ${this._currentObjectNumber + 3} 0 R`);
+                if(font.fontMetrics.missingWidth) {
+                    this._put(`/DW ${font.fontMetrics.missingWidth}`); 
+                }
+                // FIXME: this should not be hard coded. It should be generated on the fly for each font
+                this._put('/W [ 32 [ 260 267 401 646 572 823 730 221 296 296 552 572 245 322 266 367 ] 48 57 572 58 59 266 60 62 572 63 [ 429 899 633 648 631 729 556 516 728 738 279 267 614 519 903 754 779 602 779 618 549 553 728 595 926 577 560 571 329 367 329 542 448 577 556 613 476 613 561 339 548 614 253 253 525 253 930 614 604 613 613 408 477 353 614 501 778 524 504 468 379 551 379 572 ] 160 [ 260 267 ] 162 165 572 166 [ 551 516 577 832 354 497 572 322 832 500 428 572 347 347 577 619 655 266 227 347 375 497 ] 188 190 780 191 191 429 192 197 633 198 [ 873 631 ] 200 203 556 204 207 279 208 [ 722 754 ] 210 214 779 215 [ 572 779 ] 217 220 728 221 [ 560 611 622 556 556 ] ]');
+                this._put(`/CIDToGIDMap ${this._currentObjectNumber + 4} 0 R`);
+                this._put(`>>`);
+                this._put(`endobj`);
+
+                // ToUnicode
+                this._newobj();
+                let toUni = "/CIDInit /ProcSet findresource begin\n";
+                toUni += "12 dict begin\n";
+                toUni += "begincmap\n";
+                toUni += "/CIDSystemInfo\n";
+                toUni += "<</Registry (Adobe)\n";
+                toUni += "/Ordering (UCS)\n";
+                toUni += "/Supplement 0\n";
+                toUni += ">> def\n";
+                toUni += "/CMapName /Adobe-Identity-UCS def\n";
+                toUni += "/CMapType 2 def\n";
+                toUni += "1 begincodespacerange\n";
+                toUni += "<0000> <FFFF>\n";
+                toUni += "endcodespacerange\n";
+                toUni += "1 beginbfrange\n";
+                toUni += "<0000> <FFFF> <0000>\n";
+                toUni += "endbfrange\n";
+                toUni += "endcmap\n";
+                toUni += "CMapName currentdict /CMap defineresource pop\n";
+                toUni += "end\n";
+                toUni += "end";
+                this._put(`<</Length ${toUni.length}>>`);
+                this._putstream(toUni);
                 this._put('endobj');
 
-                // Descriptor
+                // CIDSystemInfo dictionary
                 this._newobj();
-                let fontDescriptor = `<</Type /FontDescriptor /FontName /${fontName}`;
-                if(font.fontMetrics.ascender) {
-                    fontDescriptor += ` /Ascent ${font.fontMetrics.ascender}`;
-                }
-                if(font.fontMetrics.descender) {
-                    fontDescriptor += ` /Descent ${font.fontMetrics.descender}`;
-                }
-                if(font.fontMetrics.flags) {
-                    fontDescriptor += ` /Flags ${font.fontMetrics.flags}`;
-                }
-                if(font.fontMetrics.capHeight) {
-                    fontDescriptor += ` /CapHeight ${font.fontMetrics.capHeight}`;
-                }
-                if(font.fontMetrics.italicAngle) {
-                    fontDescriptor += ` /ItalicAngle ${font.fontMetrics.italicAngle}`;
-                }
-                if(font.fontMetrics.fontBBox) {
-                    fontDescriptor += ` /FontBBox [${font.fontMetrics.fontBBox[0]} ${font.fontMetrics.fontBBox[1]} ${font.fontMetrics.fontBBox[2]} ${font.fontMetrics.fontBBox[3]}]`;
-                }
-                fontDescriptor += ` /FontFile2 ${font.fileObjectNumber} 0 R`;
-                fontDescriptor += '>>';
-                this._put(fontDescriptor);
+                this._put('<</Registry (Adobe)'); 
+                this._put('/Ordering (UCS)');
+                this._put('/Supplement 0');
+                this._put('>>');
                 this._put('endobj');
+
+                // Font descriptor
+                this._newobj();
+                this._put('<</Type /FontDescriptor');
+                this._put(`/FontName /${fontName}`);
+                // console.log(font.fontMetrics);
+                // console.log(font.fontMetrics.stemV);
+                // if(font.fontMetrics.stemV) {
+                //     console.log('yes');
+                // } else {
+                //     console.log('no');
+                // }
+                if(font.fontMetrics.ascender) { this._put(` /Ascent ${font.fontMetrics.ascender}`); }
+                if(font.fontMetrics.descender) { this._put(` /Descent ${font.fontMetrics.descender}`); }
+                if(font.fontMetrics.capHeight) { this._put(` /CapHeight ${font.fontMetrics.capHeight}`); }
+                if(font.fontMetrics.flags) { this._put(` /Flags ${font.fontMetrics.flags}`); }
+                if(font.fontMetrics.fontBBox) {
+                    this._put(` /FontBBox [${font.fontMetrics.fontBBox[0]} ${font.fontMetrics.fontBBox[1]} ${font.fontMetrics.fontBBox[2]} ${font.fontMetrics.fontBBox[3]}]`);
+                }
+                if(font.fontMetrics.italicAngle != undefined) { this._put(` /ItalicAngle ${font.fontMetrics.italicAngle}`); }
+                if(font.fontMetrics.missingWidth) { this._put(` /MissingWidth ${font.fontMetrics.missingWidth}`); }
+                if(font.fontMetrics.stemV) { this._put(` /StemV ${font.fontMetrics.stemV}`); }
+                this._put(`/FontFile2 ${font.fileObjectNumber} 0 R`);
+                this._put('>>');
+                this._put('endobj');
+
+                // Embed CIDToGIDMap
+                // A specification of the mapping from CIDs to glyph indices
+                // const cidtogidmap = new Int16Array(256*256*2);
+                // for(const glyphId in font.glyphMetrics) {
+                //     const glyphMetrics = font.glyphMetrics[glyphId];
+                //     const charCode = glyphMetrics.charCode;
+                //     console.log(parseInt(glyphId));
+                //     console.log(glyphId);
+                //     cidtogidmap[charCode*2] = <any>glyphId >> 8;
+                //     cidtogidmap[charCode*2+1] = <any>glyphId & 0xFF;
+                // }
+                // const compressedCidToGidMap = zlib.deflateSync(arrayBufferToBuffer(cidtogidmap.buffer));
+                const cidtogidmap = new Buffer(256*256*2);
+                for(const glyphId in font.glyphMetrics) {
+                    const glyphMetrics = font.glyphMetrics[glyphId];
+                    const charCode = glyphMetrics.charCode;
+                    console.log(parseInt(glyphId));
+                    console.log(glyphId);
+                    cidtogidmap[charCode*2] = <any>glyphId >> 8;
+                    cidtogidmap[charCode*2+1] = <any>glyphId & 0xFF;
+                }
+                const compressedCidToGidMap = zlib.deflateSync(cidtogidmap.toString('binary'));
+                this._newobj();
+                this._put(`<</Length ${compressedCidToGidMap.byteLength}`);
+                this._put('/Filter /FlateDecode');
+                this._put('>>');
+                this._putstream(compressedCidToGidMap.toString('binary'));
+                this._put('endobj');
+
+
+                // // Widths
+                // this._newobj();
+                // const charWidths: number[] = [];
+                // this._put('[260 267 401 646 572 823 730 221 296 296 552 572 245 322 266 367 572 572 572 572 572 572 572 572 572 572 266 266 572 572 572 429 899 633 648 631 729 556 516 728 738 279 267 614 519 903 754 779 602 779 618 549 553 728 595 926 577 560 571 329 367 329 542 448 577 556 613 476 613 561 339 548 614 253 253 525 253 930 614 604 613 613 408 477 353 614 501 778 524 504 468 379 551 379 572 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 260 267 572 572 572 572 551 516 577 832 354 497 572 322 832 500 428 572 347 347 577 619 655 266 227 347 375 497 780 780 780 429 633 633 633 633 633 633 873 631 556 556 556 556 279 279 279 279 722 754 779 779 779 779 779 572 779 728 728 728 728 560 611 622 556 556 556 556 556 556 858 476 561 561 561 561 253 253 253 253 596 614 604 604 604 604 604 572 604 614 614 614 614 504 613 504 ]');
+                // this._put('endobj');
+
+                // Descriptor
+                // this._newobj();
+                // let fontDescriptor = `<</Type /FontDescriptor /FontName /${fontName}`;
+                // if(font.fontMetrics.ascender) {
+                //     fontDescriptor += ` /Ascent ${font.fontMetrics.ascender}`;
+                // }
+                // if(font.fontMetrics.descender) {
+                //     fontDescriptor += ` /Descent ${font.fontMetrics.descender}`;
+                // }
+                // if(font.fontMetrics.flags) {
+                //     fontDescriptor += ` /Flags ${font.fontMetrics.flags}`;
+                // }
+                // if(font.fontMetrics.capHeight) {
+                //     fontDescriptor += ` /CapHeight ${font.fontMetrics.capHeight}`;
+                // }
+                // if(font.fontMetrics.italicAngle) {
+                //     fontDescriptor += ` /ItalicAngle ${font.fontMetrics.italicAngle}`;
+                // }
+                // if(font.fontMetrics.fontBBox) {
+                //     fontDescriptor += ` /FontBBox [${font.fontMetrics.fontBBox[0]} ${font.fontMetrics.fontBBox[1]} ${font.fontMetrics.fontBBox[2]} ${font.fontMetrics.fontBBox[3]}]`;
+                // }
+                // fontDescriptor += ` /FontFile2 ${font.fileObjectNumber} 0 R`;
+                // fontDescriptor += '>>';
+                // this._put(fontDescriptor);
+                // this._put('endobj');
             }
         }
     }
