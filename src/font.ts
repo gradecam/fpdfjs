@@ -1,3 +1,7 @@
+import * as fs from 'fs';
+import * as OpenType from './parsers/opentype';
+import * as opentype from 'opentype.js';
+
 export type FontType = 'Core' | 'Type1' | 'TrueType';
 
 export class Font {
@@ -6,15 +10,30 @@ export class Font {
     fontMetrics: FontMetrics;
     glyphMetrics: GlyphMetrics[];
     characterWidths: CharWidthMap = {};
-    fontIndex: number; // FIXME: this should probably be an optional
-    objectNumber: number; // FIXME: this should probably be an optional
-    // FIXME: maybe group all the file stuff into it's own object
-    fileObjectNumber: number; // FIXME: this should probably be an optional
-    fileData: Buffer;
-    fileOriginalSize: number;
+    // fileData: Buffer;
+    // fileOriginalSize: number;
+    // fileName?: string;
+    buffer: Buffer;
+    private openTypeBuffer?: opentype.Font;
+    private fontFileArrayBuffer?: ArrayBuffer;
     // fontDescItems: FontDescItem[] = [];
 
-    constructor(index: number, name: string, afmData: AFMData, cmapData?: CMAPData) {
+    static createCustomFont(filename: string, familyName: string): Font {
+        const parsedFontData = OpenType.openCustomFont(filename);
+        const font = new Font(parsedFontData.afmData.postScriptName || familyName, parsedFontData.afmData);
+        font.openTypeBuffer = parsedFontData.openTypeBuffer;
+        font.fontFileArrayBuffer = fs.readFileSync(filename).buffer;
+        return font;
+    }
+
+    /**
+     * Create a Font object
+     * 
+     * @param {string}   name     [description]
+     * @param {AFMData}  afmData  [description]
+     * @param {CMAPData} cmapData [description]
+     */
+    constructor(name: string, afmData: AFMData, cmapData?: CMAPData) {
         // set the name of the font
         this.name = name;
         this.type = afmData.type;
@@ -22,8 +41,8 @@ export class Font {
         // copy in the metrics for the whole font
         this.fontMetrics = afmData.fontMetrics;
         this.glyphMetrics = afmData.glyphMetrics;
-        // this.fontDescItems = afmData.descItems || [];
-        this.fileOriginalSize = afmData.originalFileSize || 0;
+        // this.fileOriginalSize = afmData.originalFileSize || 0;
+        // this.fileName = afmData.fileName;
 
         const charCodeToWidth: {[charCode: number]: number} = {};        
         if(cmapData) {
@@ -41,19 +60,14 @@ export class Font {
             // FIXME: this logic assumes that the font is encoded in ISO10646-1 (unicode)
             //        for a non unicode encoded font you will need a cmap
             for(const charData of afmData.glyphMetrics) {
-                // FIXME: is this line being used?
-                charCodeToWidth[charData.charCode] = charData.width;
-
                 const unicodeCharString = String.fromCharCode(charData.charCode);
                 this.characterWidths[unicodeCharString] = charData.width;
             }
         }
 
-        this.fontIndex = index;
-        if(this.type == 'TrueType' && afmData.fileData) {
-            // console.log('afmData.fileData:', afmData.fileData);
-            this.fileData = new Buffer(afmData.fileData, 'base64');
-        }
+        // if(this.type == 'TrueType' && afmData.fileData) {
+        //     this.fileData = new Buffer(afmData.fileData, 'base64');
+        // }
     }
 
     /**
@@ -62,17 +76,48 @@ export class Font {
      */
     getTextWidth(text: string, size: number): number {
         let totalWidth = 0;
-        // console.error('this.characterWidths:', this.characterWidths);
-        // for(const charString of Object.keys(this.characterWidths)) {
-        //     console.error('charWidthCode:', `'${charString}'`, charString.charCodeAt(0), this.characterWidths[charString]);
-        // }
         for(const char of text) {
-            // console.error('char:', char);
-            // console.error('char code:', char.charCodeAt(0));
-            // console.error('this.characterWidths[char]:', this.characterWidths[char]);
             totalWidth += this.characterWidths[char];
         }
         return totalWidth * size / 1000;
+    }
+
+    getEmbeddableFontBuffer(): ArrayBuffer {
+        if(!this.fontFileArrayBuffer) {
+            throw new Error("Custom fonts must have a font buffer");
+        }
+        return this.fontFileArrayBuffer;
+    }
+
+    get unitsPerEm(): number {
+        if(!this.fontMetrics.unitsPerEm) {
+            throw new Error("Could not calculate fonts unitsPerEm");
+        }
+
+        return this.fontMetrics.unitsPerEm;
+    }
+
+    get scale(): number {
+        return 1000/this.unitsPerEm;
+    }
+
+    charCodeToGlyph(charCode: number) {
+        if(!this.openTypeBuffer) {
+            throw new Error("Custom fonts must have a font buffer");
+        }
+        return this.openTypeBuffer.charToGlyph(String.fromCharCode(charCode));
+    }
+
+    charCodeToGlyphIndex(charCode: number): number {
+        return (<any>this.charCodeToGlyph(charCode)).index;
+    }
+
+    getGlyphAdvanceWidth(charCode: number): number {
+        return this.charCodeToGlyph(charCode).advanceWidth;
+    }
+
+    getScaledGlyphAdvanceWidth(charCode: number): number {
+        return this.charCodeToGlyph(charCode).advanceWidth * this.scale;
     }
 }
 
@@ -93,16 +138,17 @@ export interface FontMetrics {
     lineHeight?: number;
     missingWidth?: number;
     stemV?: number;
+    unitsPerEm?: number;
 }
 
 export class AFMData {
     type: FontType;
     fontMetrics: FontMetrics;
     glyphMetrics: GlyphMetrics[];
-    originalFileSize?: number;
-    fileData?: string;
+    // originalFileSize?: number;
+    // fileData?: string;
+    // fileName?: string;
     postScriptName?: string;
-    // descItems?: FontDescItem[];
 }
 
 export class CMAPRecord {
@@ -126,3 +172,18 @@ export interface FontDescItem {
     name: string;
     value: string;
 }
+
+export interface ParsedFontData {
+    afmData: AFMData;
+    openTypeBuffer: opentype.Font;
+}
+
+// export class CustomFont extends Font {
+//     openTypeBuffer: opentype.Font
+
+//     constructor(name: string, filename: string) {
+//         const parsedFontData = OpenType.openCustomFont(filename);
+//         super(parsedFontData.afmData.postScriptName || name, parsedFontData.afmData);
+//         this.openTypeBuffer = parsedFontData.openTypeBuffer;
+//     }
+// }

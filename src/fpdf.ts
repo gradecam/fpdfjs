@@ -1,22 +1,46 @@
 import * as fs from 'fs';
 import * as zlib from 'zlib';
 import * as StringDecoder from 'string_decoder';
+import * as opentype from 'opentype.js';
 import * as font from './font';
 import * as courier from '../fonts/courier.afm.json';
 import * as helvetica from '../fonts/helvetica.afm.json';
 import * as times from '../fonts/times.afm.json';
 import * as adobeStandardEncoding from '../fonts/adobe-standard-encoding.cmap.json';
-// var arrayBufferToBuffer = require('arraybuffer-to-buffer');
-
-// import * as OpenSans from '../fonts/opensans.afm.json';
-
 
 const typedAdobeStandardEncoding: font.CMAPData = <any>adobeStandardEncoding;
+
+interface FontRef {
+    font: font.Font;
+    index: number;
+    objectNumber?: number;
+    fileObjectNumber?: number;
+    subsettedUncompressedFileSize?: number;
+    subsettedCompressedFileData?: Buffer;
+}
+
+export interface TextOptions {
+    // lineBreak?: boolean;
+    // underline?: boolean;
+    // strike?: boolean;
+    // height?: number;
+    width?: number;
+    align?: 'right' | string;
+    characterSpacing?: number;
+}
+
+export type LineCapStyle = 'BUTT' | 'ROUND' | 'SQUARE';
+const KAPPA = 4.0 * ((Math.sqrt(2) - 1.0) / 3.0);
+
+function formatFloat(value: number): string {
+    return value.toFixed(3);
+}
 
 export class FPdf {
 
     /**
-     * The version of the PDF spec that we are targeting
+     * The version of the PDF spec that we are targeting. The minimum version that supports the features
+     * we support should be used
      * 
      * @type {String}
      */
@@ -30,11 +54,13 @@ export class FPdf {
      */
     private _currentObjectNumber = 2;
     private _currentFontKey: string | null = null;
+    private _chosenFontKey: string | null = null;
     private _currentFontSize = 10;
+    private _chosenFontSize = 10;
 
     private _pages: Page[] = [];
     private _objects: PdfObject[] = [];
-    private _fonts: { [fontName: string]: font.Font } = {};
+    private _fonts: { [fontName: string]: FontRef } = {};
     private _coreFonts: { [fontName: string]: {name: string; data: font.AFMData} } = {};
 
     private _pen = new Pen();
@@ -42,6 +68,7 @@ export class FPdf {
     private _metadata: {name: string; value: string}[] = [];
 
     private _buffer = '';
+    private _subset: {[index: number]: number} = {};
 
     private _standardPageSizes: {[typeName: string]: {width: number; height: number}} = {
         a3: {width: 841.89, height: 1190.55},
@@ -58,15 +85,30 @@ export class FPdf {
         this._coreFonts['times'] = {name: 'Times-Roman', data:  <any>times};
     }
 
+    get currentFontMetrics() {
+        if(!this._chosenFont) {
+            throw new Error('font metrics can not be retreived until a font is chosen');
+        }
+
+        const currentFont = this._chosenFont;
+        // console.log('=============> metrics: ', currentFont.fontMetrics.ascender, this._chosenFontSize);
+        return {
+            ascender: currentFont.fontMetrics.ascender / 1000 * this._chosenFontSize,
+            descender: currentFont.fontMetrics.descender / 1000 * this._chosenFontSize,
+            gap: 0,
+            lineHeight: (currentFont.fontMetrics.ascender - currentFont.fontMetrics.descender) / 1000 * this._chosenFontSize
+        };
+    }
+
     get _currentPage() {
         return this._pages[this._pages.length - 1];
     }
 
-    get _currentFont(): font.Font | null {
-        if(!this._currentFontKey) {
+    get _chosenFont(): font.Font | null {
+        if(!this._chosenFontKey) {
             return null;
         }
-        return this._fonts[this._currentFontKey];
+        return this._fonts[this._chosenFontKey].font;
     }
 
     close() {
@@ -81,18 +123,19 @@ export class FPdf {
     addPage(size?: any, orientation?: any, rotation?: any) {
 
         // Start a new page
-        const curFontKey = this._currentFontKey
+        const curFontKey = this._chosenFontKey
         this._beginpage(size, orientation, rotation);
 
         // Set line cap style to square
-        this._putToCurrentPage('2 J');
+        // this._putToCurrentPage('2 J');
 
         // Set line width
-        this._putToCurrentPage(`${this._pen.lineWidth.toFixed(2)} w`);
+        this._putToCurrentPage(`${formatFloat(this._pen.lineWidth)} w`);
+
         // Set font
-        if(curFontKey && this._currentFontSize) {
-            this.setFont(curFontKey, this._currentFontSize);
-        }
+        // if(curFontKey && this._currentFontSize) {
+        //     this.setFont(curFontKey, this._currentFontSize);
+        // }
     }
 
     strokeColor(red: number, green: number, blue: number) {
@@ -100,11 +143,11 @@ export class FPdf {
     }
 
     getTextWidth(text: string): number {
-        if(!this._currentFont || !this._currentFontSize) {
+        if(!this._chosenFont || !this._chosenFontSize) {
             throw new Error("getStringWidth: A font and size must be set before measuring text");
         }
 
-        return this._currentFont.getTextWidth(text, this._currentFontSize);
+        return this._chosenFont.getTextWidth(text, this._chosenFontSize);
     }
 
     drawOptsToPdfOp(opts?: DrawOpts): string {
@@ -123,7 +166,7 @@ export class FPdf {
      * Send a command to the PDF to stroke the current path
      */
     stroke(): FPdf {
-        this.$fillStroke({stroke: true});
+        this.$S();
         return this;
     }
 
@@ -150,6 +193,33 @@ export class FPdf {
     }
 
     /**
+     * Stream out a description of a rounded rectangle to the PDF. Nothing will actually be drawn until
+     * a fill or stroke command goes out after it
+     * @param x The x coordinate to draw at
+     * @param y The y coordiante to draw at
+     * @param w The width of the rectangle
+     * @param h The height of the rectangle
+     */
+    roundedRect(x: number, y: number, w: number, h: number, r: number = 0): FPdf {
+        // ({x, y} = this._transformPoint(x, y));
+        r = Math.min(r, 0.5 * w, 0.5 * h);
+        const c = r * (1.0 - KAPPA);
+        this.moveTo(x + r, y);
+        this.lineTo(x + w -r, y);
+        this.bezierCurveTo(x + w - c, y, x + w, y + c, x + w, y + r);
+        this.lineTo(x + w, y + h - r);
+        this.bezierCurveTo(x + w, y + h - c, x + w - c, y + h, x + w - r, y + h);
+        this.lineTo(x + r, y + h);
+        this.bezierCurveTo(x + c, y + h, x, y + h - c, x, y + h - r);
+        this.lineTo(x, y + r);
+        this.bezierCurveTo(x, y + c, x + c, y, x + r, y);
+        this.closePath();
+
+        // @closePath()
+        return this;
+    }
+
+    /**
      * Draw a rect immediately. Don't wait for a fill or stroke command
      * @param x The x coordinate to draw at
      * @param y The y coordiante to draw at
@@ -164,8 +234,122 @@ export class FPdf {
         return this;
     }
 
+    moveTo(x: number, y: number): FPdf {
+        ({x, y} = this._transformPoint(x, y));
+        this.$m(x, y);
+        return this;
+    }
+
+    lineTo(x: number, y: number): FPdf {
+        ({x, y} = this._transformPoint(x, y));
+        this.$l(x, y);
+        return this;
+    }
+
+    bezierCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void {
+        ({x: cp1x, y: cp1y} = this._transformPoint(cp1x, cp1y));
+        ({x: cp2x, y: cp2y} = this._transformPoint(cp2x, cp2y));
+        ({x, y} = this._transformPoint(x, y));
+        this.$c(cp1x, cp1y, cp2x, cp2y, x, y);
+    }
+
+    lineWidth(width: number): void {
+        this.$w(width);
+    }
+
+    lineCap(style: LineCapStyle): void {
+        this.$J(style);
+    }
+
+    closePath(): void {
+        this.$h();
+    }
+
+    setCharacterSpacing(advanceWidth: number): void {
+        this.$Tc(advanceWidth);
+    }
+
+    save() {
+        this.$q();
+    }
+
+    restore() {
+        this.$Q();
+    }
+
+    /**
+     * move the pen to (x, y)
+     * @param {number} x the horizontal coordinate to move the pen to
+     * @param {number} y the vertical coordinate to move the pen to
+     */
+    $m(x: number, y: number): void {
+        this._putToCurrentPage(`${formatFloat(x)} ${formatFloat(y)} m`);
+    }
+
+    /**
+     * draw a line from the current pen positon to to (x, y)
+     * @param {number} x the horizontal coordinate to draw the line to
+     * @param {number} y the vertical coordinate to draw the line to
+     */
+    $l(x: number, y: number): void {
+        this._putToCurrentPage(`${formatFloat(x)} ${formatFloat(y)} l`);
+    }
+
+    $c(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number) {
+        this._putToCurrentPage(`${formatFloat(cp1x)} ${formatFloat(cp1y)} ${formatFloat(cp2x)} ${formatFloat(cp2y)} ${formatFloat(x)} ${formatFloat(y)} c`);
+    }
+
+    $h(): void {
+        this._putToCurrentPage('h');
+    }
+
+    /**
+     * save the current graphics state
+     */
+    $q(): void {
+        this._putToCurrentPage('q');
+    }
+
+    /**
+     * restore the previous graphics state
+     */
+    $Q(): void {
+        this._putToCurrentPage('Q');
+    }
+
+    /**
+     * stroke the current path (made with moveTo, lineTo, etc)
+     */
+    $S(): void {
+        this._putToCurrentPage(' S');   
+    }
+
+    /**
+     * set the LineCap style
+     * @param {LineCapStyle} style [description]
+     */
+    $J(style: LineCapStyle): void {
+        this._putToCurrentPage(`${style} S`);      
+    }
+
+    /**
+     * sets the current line width
+     * @param {number} width the width to use in points for the pen
+     */
+    $w(width: number): void {
+        this._putToCurrentPage(`${formatFloat(width)} w`);
+    }
+
+    /**
+     * use charachter spacing with the given advance width
+     * @param {number} advanceWidth the amount to advance the pen after each character
+     */
+    $Tc(advanceWidth: number): void {
+        this._putToCurrentPage(`${formatFloat(advanceWidth)} Tc`);
+    }
+
     $rect(x: number, y: number, w: number, h: number): void {
-        this._putToCurrentPage(`${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${(h*-1).toFixed(2)} re`);
+        this._putToCurrentPage(`${formatFloat(x)} ${formatFloat(y)} ${formatFloat(w)} ${formatFloat((h*-1))} re`);
     }
 
     $fillStroke(opts?: DrawOpts): void {
@@ -177,14 +361,28 @@ export class FPdf {
         this._putToCurrentPage(`${red.toFixed(3)} ${green.toFixed(3)} ${blue.toFixed(3)} RG `);
     }
 
+    addCustomFont(family: string, style: string, font: font.Font) {
+        const fontKey = this._getFontKey(family, style);
+
+        // if the font is already loaded then we are done
+        if(this._fonts[fontKey]) {
+            return;
+        }
+
+        const fontIndex = Object.keys(this._fonts).length + 1;
+        this._fonts[fontKey] = {
+            font: font,
+            index: fontIndex
+        };
+    }
+
     addFont(fontKey: string): void;
     addFont(family: string, style: string): void;
-    addFont(family: string, style: string, file: string): void;
+    // addFont(family: string, style: string, filename: string): void;
     addFont(...args: any[]): void {
-        // let {fontKey, size} = this._extractSetFontArgs(args.concat([0]));
         let fontKey: string;
         let filename: string | undefined;
-        // console.log(args);
+
         if(args.length == 1) {
             fontKey = args[0];
         } else if(args.length == 2) {
@@ -193,7 +391,7 @@ export class FPdf {
             fontKey = this._getFontKey(args[0], args[1]);
             filename = args[2];
         } else {
-            throw new Error(`setFont requires either two or three aguments. You passed in ${args.length}`);
+            throw new Error(`add requires one, two or three aguments. You passed in ${args.length}`);
         }
 
         // if the font is already loaded then we are done
@@ -203,109 +401,171 @@ export class FPdf {
 
         const fontIndex = Object.keys(this._fonts).length + 1;
         if(this._coreFonts[fontKey]) {
-            this._fonts[fontKey] = new font.Font(fontIndex, this._coreFonts[fontKey].name, this._coreFonts[fontKey].data, typedAdobeStandardEncoding);
-        } else {
-            if(!filename) {
-                throw new Error('you must pass filename for the .afm.json file that you want to use for this custom font');
+            this._fonts[fontKey] = {
+                font: new font.Font(this._coreFonts[fontKey].name, this._coreFonts[fontKey].data, typedAdobeStandardEncoding),
+                index: fontIndex
             }
-            const afmDataBuffer = fs.readFileSync(filename);
-            const afmData: font.AFMData = JSON.parse(afmDataBuffer.toString())
-            this._fonts[fontKey] = new font.Font(fontIndex, afmData.postScriptName || args[0], afmData);
-        }
-    }
-
-    _extractSetFontArgs(args: any[]): {fontKey: string; size: number} {
-        let fontKey: string;
-        let size: number;
-        if(args.length == 2) {
-            fontKey = args[0];
-            size = args[1];
-        } else if(args.length == 3) {
-            fontKey = this._getFontKey(args[0], args[1]);
-            size = args[2];
         } else {
-            throw new Error(`setFont requires either two or three aguments. You passed in ${args.length}`);
+            throw new Error('this needs to use the new api for adding fonts (addCustomFont)');
+            // FIXME: we don't want to do .afm.json fonts for custom fonts anymore
+            //   1. just pass in the file name of the TTF
+            //   2. parse out all of the AFM data on the fly
+            //   3. initialize an opentype instance with the font data and store it in a member variable
+            // if(!filename) {
+            //     throw new Error('you must pass filename for the path to the TrueType file that you want to use for this custom font');
+            // }
+            // const afmDataBuffer = fs.readFileSync(filename);
+            // const afmData: font.AFMData = JSON.parse(afmDataBuffer.toString())
+            // this._fonts[fontKey] = {
+            //     font: new font.Font(afmData.postScriptName || args[0], afmData),
+            //     index: fontIndex
+            // }
         }
-
-        return {fontKey: fontKey, size: size};
     }
 
-    setFont(fontKey: string, size: number): void;
-    setFont(family: string, style: string, size: number): void;
-    setFont(...args: any[]): void {
-        const {fontKey, size} = this._extractSetFontArgs(args);
+    // FIXME: this is only used in once place now, I think it would be better inlined
+    // _extractSetFontArgs(args: any[]): {fontKey: string; size: number} {
+    //     let fontKey: string;
+    //     let size: number;
+    //     if(args.length == 1) {
+    //         fontKey = this._getFontKey(args[0], '');
+    //         size = this._currentFontSize;
+    //     } if(args.length == 2) {
+    //         fontKey = this._getFontKey(args[0], args[1]);
+    //         size = this._currentFontSize;
+    //     } else if(args.length == 3) {
+    //         fontKey = this._getFontKey(args[0], args[1]);
+    //         size = args[2];
+    //     } else {
+    //         throw new Error(`setFont requires either two or three aguments. You passed in ${args.length}`);
+    //     }
+
+    //     return {fontKey: fontKey, size: size};
+    // }
+
+    // // setFont(fontKey: string, size: number): void;
+    // setFont(family: string): void;
+    // // setFont(family: string, size: number): void;
+    // setFont(family: string, style: string): void;
+    // setFont(family: string, style: string, size: number): void;
+    // setFont(...args: any[]): void {
+    setFont(family: string, style: string = '', size?: number): void {
+        // console.log('setFont():', family, style, size);
+        // const {fontKey, size} = this._extractSetFontArgs(args);
+        const fontKey = this._getFontKey(family, style);
+        size = size || this._chosenFontSize;
 
         // if this is already the current font just bail
         if(fontKey == this._currentFontKey && size == this._currentFontSize) {
             return;
         }
 
-        // load the font data if it's not already loaded
+       // load the font data if it's not already loaded
         if(!this._fonts[fontKey]) {
             // it it's one of the standard PDF fonts we can just add it
             if(this._coreFonts[fontKey]) {
                 this.addFont(fontKey);
             } else {
-                throw new Error(`Undefined font: ${fontKey}`);
+                throw new Error(`The font '${fontKey}'' has not been loaded yet. You must load it with addCustomFont before calling setFont`);
             }
         }
 
-        this._currentFontKey = fontKey;
-        this._currentFontSize = size;
+        // this._currentFontKey = fontKey;
+        // this._currentFontSize = size;
 
-        if(this._pages.length > 0) {
-            const formattedFontSize = size.toFixed(2);
-            this._putToCurrentPage(`BT /F${this._fonts[fontKey].fontIndex} ${formattedFontSize} Tf ET`);
-        } else {
-        }
+        // if(this._pages.length > 0) {
+        //     const formattedFontSize = size.toFixed(2);
+        //     this._putToCurrentPage(`BT /F${this._fonts[fontKey].index} ${formattedFontSize} Tf ET`);
+        // } else {
+        // }
+
+        this._chosenFontKey = fontKey;
+        this._chosenFontSize = size;
     }
+
+    setFontSize(size: number) {
+        this._chosenFontSize = size;
+        // console.log('this._chosenFontSize:', this._chosenFontSize);
+    }
+
 
     _encodeText(s: string) {
-        // let octalString = '';
-        // for(let i = 0; i < s.length; i++) {
-        //     const code = s.charCodeAt(i);
-        //     const octal = code.toString(8);
-        //     octalString += `\\0\\${octal}`;
-        // }
-        // return octalString;
-        // // console.log('s:', s);
-        // const buffer = new Int8Array(s.length*2);
-        // for(let i = 0; i < s.length; i++) {
-        //     buffer[i*2] = 0;
-        //     buffer[i*2+1] = s.charCodeAt(i);
-        //     // console.log('char:', s.charCodeAt(i));
-        // }
-        const buffer = new Buffer(s.length*2);
+        // this could definitely use some comments
+        const buffer = new Int8Array(s.length*2);
         for(let i = 0; i < s.length; i++) {
-            buffer[i*2] = 0;
-            buffer[i*2+1] = s.charCodeAt(i);
-            // console.log('char:', s.charCodeAt(i));
+            const codePoint = s.charCodeAt(i);
+            buffer[i*2] = codePoint >> 8;
+            buffer[i*2+1] = codePoint & 255;
+            this._subset[codePoint] = codePoint;
         }
-        // console.log(buffer.toLocaleString());
-        // return buffer.toString();
-        // const buffer = new Buffer(s.length);
-        // const buffer = Buffer.from(s, 'utf16le');
-        // console.log(buffer.toString('binary'));
-        // console.log(buffer.toString('hex'));
-        return buffer.toString('binary');
-        // return s;
+        return (new Buffer(buffer.buffer)).toString('binary');
     }
 
-    text(x: number, y: number, text: string) {
-        if(!this._currentFont) {
+    text(x: number, y: number, text: string, opts: TextOptions = {}) {
+        if(text == 'Student Name:') {
+            console.log('text:', text, x, y, opts);
+        }
+        
+        // console.log('this._chosenFontSize:', this._chosenFontSize);
+        if(!this._chosenFont) {
             throw new Error('No font has been set');
         }
 
-        // transform x and y
         ({x, y} = this._transformPoint(x, y));
+        if(text == 'Student Name:') {
+            console.log('transformed point:', x, y);
+            // console.log(`${y} = ${this.page.height} - ${y} - (${this._font.ascender} / 1000 * ${this._fontSize})`);
+        }
 
+
+        if(opts.align == 'right' && opts.width) {
+            const textWidth = this.getTextWidth(text);
+            x = x + opts.width - textWidth;
+        }
+
+        this._putToCurrentPage('BT');
         // by default this PDF command will use the y value for the font baseline
         // we want to move it down so that the y value given here becomes the the top
-        y -= this._currentFont.fontMetrics.ascender * this._currentFontSize / 1000;
-        const s = `BT ${x.toFixed(2)} ${y.toFixed(2)} Td (${this._encodeText(text)}) Tj ET`;
+        // console.log('text():', text, x, y, this._chosenFont.fontMetrics.ascender * this._currentFontSize / 1000, this._chosenFont.fontMetrics.descender * this._currentFontSize / 1000);
+        y -= this._chosenFont.fontMetrics.ascender * this._chosenFontSize / 1000;
+        if(text == 'Student Name:') {
+            console.log('height adjustment:', y, `${this._chosenFont.fontMetrics.ascender} * ${this._chosenFontSize} / 1000`);
+            // console.log(`${y} = ${this.page.height} - ${y} - (${this._font.ascender} / 1000 * ${this._fontSize})`);
+        }
+
+        // console.log('text():', text, x, y, this._chosenFontSize, this._currentFontSize, this._chosenFontKey, this._currentFontKey);
+        if(this._chosenFontKey && (this._chosenFontSize != this._currentFontSize || this._chosenFontKey != this._currentFontKey)) {
+            const formattedFontSize = formatFloat(this._chosenFontSize);
+            this._putToCurrentPage(`/F${this._fonts[this._chosenFontKey].index} ${formattedFontSize} Tf`);
+            this._currentFontSize = this._chosenFontSize;
+            this._currentFontKey = this._chosenFontKey;
+        }
+        if(opts.characterSpacing) {
+            // this.save();
+            this.setCharacterSpacing(opts.characterSpacing);
+        }
+        const s = `${formatFloat(x)} ${formatFloat(y)} Td (${this._encodeText(text)}) Tj ET`;
+        if(text == 'Student Name:') {
+          console.log('write PDF text:', text, x, y);
+        }
         this._putToCurrentPage(s);
+        if(opts.characterSpacing) {
+            // this.restore();
+            // FIXME: if we tracked this like we do with _chosenFontSize and _chosenFontKey we could eliminate a lot
+            // of these, improve performance, and create smaller PDFs
+            this.setCharacterSpacing(0);
+        }
     }
 
+    /**
+     * The native PDF coordinate system sets the origin at the bottom left corner of the page
+     * It is more intuitive to construct PDFs by starting with the top as y = 0 with postitive y
+     * values moving you down the page. This method transforms coordinates from the convient form
+     * to the PDF native form
+     * 
+     * @param {number} x The x coordinate
+     * @param {number} y The y coordinate (At the top of the page y=0. Moving down the page y gets larger)
+     */
     _transformPoint(x: number, y: number): {x: number; y: number} {
         return {x, y: this._currentPage.height - y};
     }
@@ -313,14 +573,18 @@ export class FPdf {
     output(filename?: string) {
         this.close();
         if(filename) {
-            console.log(`${filename}:`, this._buffer.length);
             fs.writeFileSync(filename, this._buffer, {encoding: 'binary'});
         } else {
-            console.log(this._buffer);
+            process.stdout.write(this._buffer);
         }
     }
 
     get buffer(): string {
+        return this._buffer;
+    }
+
+    get finalBuffer(): string {
+        this.close();
         return this._buffer;
     }
 
@@ -381,7 +645,7 @@ export class FPdf {
     }
 
     /**
-     * _put actually appends the string to the buffer (which right now is just stdout)
+     * _put actually appends the string to the buffer
      */
     _put(s: string) {
         this._buffer += s + "\n";
@@ -397,12 +661,13 @@ export class FPdf {
 
     _putresources() {
         this._putfonts();
-        // Resource dictionary
         this._newobj(2);
         this._put('<<');
         this._putresourcedict();
         this._put('>>');
         this._put('endobj');
+        this._put((' '.repeat(1000) + "\n").repeat(642));
+        this._put((' '.repeat(432) + "\n"));
     }
 
     _putresourcedict()
@@ -411,7 +676,7 @@ export class FPdf {
         this._put('/Font <<');
         for(let fontKey of Object.keys(this._fonts)) {
             const font = this._fonts[fontKey];
-            this._put(`/F${font.fontIndex} ${font.objectNumber} 0 R`);
+            this._put(`/F${font.index} ${font.objectNumber} 0 R`);
         }
         this._put('>>');
         this._put('/XObject <<');
@@ -507,7 +772,7 @@ export class FPdf {
         this._put(`/Kids [${pageReferences.join("\n")} ]`);
 
         this._put(`/Count ${this._pages.length}`);
-        this._put(`/MediaBox [0 0 ${this._currentPage.width.toFixed(2)} ${this._currentPage.height.toFixed(2)}]`);
+        this._put(`/MediaBox [0 0 ${formatFloat(this._currentPage.width)} ${formatFloat(this._currentPage.height)}]`);
 
         this._put('>>');
         this._put('endobj');
@@ -527,39 +792,79 @@ export class FPdf {
 
     _putfonts() {
         for(let fontKey of Object.keys(this._fonts)) {
-            const font = this._fonts[fontKey];
-            if(font.type == 'Core') { continue; }
-            font.fileObjectNumber = this._newobj();
-            this._put(`<</Length ${font.fileData.byteLength}`);
+            const fontRef = this._fonts[fontKey];
+            if(fontRef.font.type == 'Core') { continue; }
+
+            // if(!fontRef.font.openTypeBuffer) {
+            //     // FIXME: in reality we should create separate classes for custom and standard fonts
+            //     //   and use a type descriminator so it can tell that we have a working custom font
+            //     throw new Error("Custom fonts must have an opentype buffer");
+            // }
+            // const fontBuffer = fontRef.font.openTypeBuffer.toArrayBuffer();
+
+            // // FIXME: why are we reading this in here? Didn't we already read it in the pull the font metrics?
+            // const bigFont = opentype.loadSync(fontRef.font.fileName);
+            // const bigFont = fontRef.font.openTypeBuffer;
+            // const glyphs = [bigFont.charToGlyph(String.fromCharCode(0))];
+            // for(const charCodeString of Object.keys(this._subset)) {
+            //     const charCode = parseInt(charCodeString);
+            //     const glyph = bigFont.charToGlyph(String.fromCharCode(charCode));
+            //     glyphs.push(glyph);
+            // }
+            
+            //*
+            // const bigFontBuffer = fs.readFileSync('/Users/rick/code/gradecam/gcformservice/public/stylesheets/fonts/OpenSans-Regular.ttf');
+            // var subsettedArrayBuffer = new Uint8Array(bigFontBuffer).buffer;
+            //*/
+
+            /*
+            const subsettedFont = bigFont;
+            // const subsettedFont = new opentype.Font({
+            //     familyName: bigFont.names.fontFamily.en,
+            //     styleName: bigFont.names.fontSubfamily.en,
+            //     unitsPerEm: bigFont.unitsPerEm,
+            //     ascender: bigFont.ascender,
+            //     descender: bigFont.descender,
+            //     glyphs: glyphs
+            // });
+            const subsettedArrayBuffer = subsettedFont.toArrayBuffer();
+            //*/
+
+
+            const subsettedArrayBuffer = fontRef.font.getEmbeddableFontBuffer();
+            fontRef.subsettedUncompressedFileSize = subsettedArrayBuffer.byteLength;
+            fontRef.subsettedCompressedFileData = zlib.deflateSync(new Buffer(subsettedArrayBuffer));
+
+            fontRef.fileObjectNumber = this._newobj();
+            this._put(`<</Length ${fontRef.subsettedCompressedFileData.byteLength}`);
             this._put('/Filter /FlateDecode');
-            this._put(`/Length1 ${font.fileOriginalSize}`);
+            this._put(`/Length1 ${fontRef.subsettedUncompressedFileSize}`);
             this._put('>>');
-            this._putstream(font.fileData.toString('binary'));
+            this._putstream(fontRef.subsettedCompressedFileData.toString('binary'));
             this._put('endobj');
         }
         for(let fontKey of Object.keys(this._fonts)) {
-            const font = this._fonts[fontKey];
-            
+            const fontRef = this._fonts[fontKey];
+
             let fontName;
-            if(font.type == 'Core') {
+            if(fontRef.font.type == 'Core') {
                 // Core font
-                fontName = font.name;
-                font.objectNumber = this._newobj();
+                fontName = fontRef.font.name;
+                fontRef.objectNumber = this._newobj();
                 this._put('<</Type /Font');
                 this._put(`/BaseFont /${fontName}`);
                 this._put('/Subtype /Type1');
                 this._put('>>');
                 this._put('endobj');
-            } else if(font.type == 'TrueType') {
-
+            } else if(fontRef.font.type == 'TrueType') {
                 // Because this is a composit font and not just the straight TTF font we must append a code prefix to
                 // to the font name. It must be six capital letters but it could be anything. FPDFJS just happens to
                 // fit the bill :)
-                fontName = `FPDFJS+${font.name}`;
+                fontName = `FPDFJS+${fontRef.font.name}`;
 
                 // Type0 Font
                 // A composite font - a font composed of other fonts, organized hierarchically
-                font.objectNumber = this._newobj();
+                fontRef.objectNumber = this._newobj();
                 this._put('<</Type /Font');
                 this._put(`/Subtype /Type0`);
                 this._put(`/BaseFont /${fontName}`);
@@ -577,11 +882,34 @@ export class FPdf {
                 this._put(`/BaseFont /${fontName}`);
                 this._put(`/CIDSystemInfo ${this._currentObjectNumber + 2} 0 R`);
                 this._put(`/FontDescriptor ${this._currentObjectNumber + 3} 0 R`);
-                if(font.fontMetrics.missingWidth) {
-                    this._put(`/DW ${font.fontMetrics.missingWidth}`); 
+                if(fontRef.font.fontMetrics.missingWidth) {
+                    this._put(`/DW ${fontRef.font.fontMetrics.missingWidth}`); 
                 }
-                // FIXME: this should not be hard coded. It should be generated on the fly for each font
-                this._put('/W [ 32 [ 260 267 401 646 572 823 730 221 296 296 552 572 245 322 266 367 ] 48 57 572 58 59 266 60 62 572 63 [ 429 899 633 648 631 729 556 516 728 738 279 267 614 519 903 754 779 602 779 618 549 553 728 595 926 577 560 571 329 367 329 542 448 577 556 613 476 613 561 339 548 614 253 253 525 253 930 614 604 613 613 408 477 353 614 501 778 524 504 468 379 551 379 572 ] 160 [ 260 267 ] 162 165 572 166 [ 551 516 577 832 354 497 572 322 832 500 428 572 347 347 577 619 655 266 227 347 375 497 ] 188 190 780 191 191 429 192 197 633 198 [ 873 631 ] 200 203 556 204 207 279 208 [ 722 754 ] 210 214 779 215 [ 572 779 ] 217 220 728 221 [ 560 611 622 556 556 ] ]');
+
+                let widthMap = '/W [';
+                // if(!fontRef.font.openTypeBuffer) {
+                //     // FIXME: in reality we should create separate classes for custom and standard fonts
+                //     //   and use a type descriminator so it can tell that we have a working custom font
+                //     throw new Error("Custom fonts must have an opentype buffer");
+                // }
+
+                let gid = 0;
+                // // FIXME: why are we reading this in here? Didn't we already read it in the pull the font metrics?
+                // //   also we already opened it and read in the whole thing above. we should only read it in once per session
+                // const bigFont = opentype.loadSync(fontRef.font.fileName);
+                // const bigFont = fontRef.font.openTypeBuffer;
+                const scale = 1000/fontRef.font.unitsPerEm;
+                for(const charCodeString of Object.keys(this._subset)) {
+                    const charCode = parseInt(charCodeString);
+                    // const glyph = bigFont.charToGlyph(String.fromCharCode(charCode));
+                    // const scaledWidth = Math.round(glyph.advanceWidth * scale);
+                    const scaledWidth = formatFloat(fontRef.font.getScaledGlyphAdvanceWidth(charCode));
+                    widthMap += `${charCodeString} [${scaledWidth}] `;
+                    gid++;
+                }
+                widthMap += ']';
+
+                this._put(widthMap);
                 this._put(`/CIDToGIDMap ${this._currentObjectNumber + 4} 0 R`);
                 this._put(`>>`);
                 this._put(`endobj`);
@@ -624,88 +952,46 @@ export class FPdf {
                 this._newobj();
                 this._put('<</Type /FontDescriptor');
                 this._put(`/FontName /${fontName}`);
-                // console.log(font.fontMetrics);
-                // console.log(font.fontMetrics.stemV);
-                // if(font.fontMetrics.stemV) {
-                //     console.log('yes');
-                // } else {
-                //     console.log('no');
-                // }
-                if(font.fontMetrics.ascender) { this._put(` /Ascent ${font.fontMetrics.ascender}`); }
-                if(font.fontMetrics.descender) { this._put(` /Descent ${font.fontMetrics.descender}`); }
-                if(font.fontMetrics.capHeight) { this._put(` /CapHeight ${font.fontMetrics.capHeight}`); }
-                if(font.fontMetrics.flags) { this._put(` /Flags ${font.fontMetrics.flags}`); }
-                if(font.fontMetrics.fontBBox) {
-                    this._put(` /FontBBox [${font.fontMetrics.fontBBox[0]} ${font.fontMetrics.fontBBox[1]} ${font.fontMetrics.fontBBox[2]} ${font.fontMetrics.fontBBox[3]}]`);
+
+                // /StemV 0
+                if(fontRef.font.fontMetrics.ascender) { this._put(` /Ascent ${fontRef.font.fontMetrics.ascender}`); }
+                if(fontRef.font.fontMetrics.descender) { this._put(` /Descent ${fontRef.font.fontMetrics.descender}`); }
+                if(fontRef.font.fontMetrics.capHeight) { this._put(` /CapHeight ${fontRef.font.fontMetrics.capHeight}`); }
+                if(fontRef.font.fontMetrics.flags) { this._put(` /Flags ${fontRef.font.fontMetrics.flags}`); }
+                if(fontRef.font.fontMetrics.fontBBox) {
+                    this._put(` /FontBBox [${fontRef.font.fontMetrics.fontBBox[0]} ${fontRef.font.fontMetrics.fontBBox[1]} ${fontRef.font.fontMetrics.fontBBox[2]} ${fontRef.font.fontMetrics.fontBBox[3]}]`);
                 }
-                if(font.fontMetrics.italicAngle != undefined) { this._put(` /ItalicAngle ${font.fontMetrics.italicAngle}`); }
-                if(font.fontMetrics.missingWidth) { this._put(` /MissingWidth ${font.fontMetrics.missingWidth}`); }
-                if(font.fontMetrics.stemV) { this._put(` /StemV ${font.fontMetrics.stemV}`); }
-                this._put(`/FontFile2 ${font.fileObjectNumber} 0 R`);
+                if(fontRef.font.fontMetrics.italicAngle != undefined) { this._put(` /ItalicAngle ${fontRef.font.fontMetrics.italicAngle}`); }
+                if(fontRef.font.fontMetrics.missingWidth) { this._put(` /MissingWidth ${fontRef.font.fontMetrics.missingWidth}`); }
+                if(fontRef.font.fontMetrics.stemV != undefined) { this._put(` /StemV ${fontRef.font.fontMetrics.stemV}`); }
+                console.log(fontRef.font.fontMetrics);
+                this._put(`/FontFile2 ${fontRef.fileObjectNumber} 0 R`);
                 this._put('>>');
                 this._put('endobj');
 
                 // Embed CIDToGIDMap
-                // A specification of the mapping from CIDs to glyph indices
-                // const cidtogidmap = new Int16Array(256*256*2);
-                // for(const glyphId in font.glyphMetrics) {
-                //     const glyphMetrics = font.glyphMetrics[glyphId];
-                //     const charCode = glyphMetrics.charCode;
-                //     console.log(parseInt(glyphId));
-                //     console.log(glyphId);
-                //     cidtogidmap[charCode*2] = <any>glyphId >> 8;
-                //     cidtogidmap[charCode*2+1] = <any>glyphId & 0xFF;
-                // }
-                // const compressedCidToGidMap = zlib.deflateSync(arrayBufferToBuffer(cidtogidmap.buffer));
-                const cidtogidmap = new Buffer(256*256*2);
-                for(const glyphId in font.glyphMetrics) {
-                    const glyphMetrics = font.glyphMetrics[glyphId];
-                    const charCode = glyphMetrics.charCode;
-                    console.log(parseInt(glyphId));
-                    console.log(glyphId);
+                // A mapping from CIDs to glyph indices
+                const cidtogidmap = new Int8Array(256*256*2);
+                let i = 1;
+                for(const charCodeString of Object.keys(this._subset)) {
+                    const charCode = parseInt(charCodeString);
+                    // const glyphId = i;
+                    // const glyphId = charCode;
+                    // const glyph = bigFont.charToGlyph(String.fromCharCode(charCode));
+                    // const glyphId = (<any>glyph).index;
+                    const glyphId = fontRef.font.charCodeToGlyphIndex(charCode);
                     cidtogidmap[charCode*2] = <any>glyphId >> 8;
                     cidtogidmap[charCode*2+1] = <any>glyphId & 0xFF;
+                    i++;
                 }
-                const compressedCidToGidMap = zlib.deflateSync(cidtogidmap.toString('binary'));
+                const compressedCidToGidMap = zlib.deflateSync(new Buffer(cidtogidmap.buffer));
+                const compressedString = compressedCidToGidMap.toString('binary');
                 this._newobj();
                 this._put(`<</Length ${compressedCidToGidMap.byteLength}`);
                 this._put('/Filter /FlateDecode');
                 this._put('>>');
-                this._putstream(compressedCidToGidMap.toString('binary'));
+                this._putstream(compressedString);
                 this._put('endobj');
-
-
-                // // Widths
-                // this._newobj();
-                // const charWidths: number[] = [];
-                // this._put('[260 267 401 646 572 823 730 221 296 296 552 572 245 322 266 367 572 572 572 572 572 572 572 572 572 572 266 266 572 572 572 429 899 633 648 631 729 556 516 728 738 279 267 614 519 903 754 779 602 779 618 549 553 728 595 926 577 560 571 329 367 329 542 448 577 556 613 476 613 561 339 548 614 253 253 525 253 930 614 604 613 613 408 477 353 614 501 778 524 504 468 379 551 379 572 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 260 267 572 572 572 572 551 516 577 832 354 497 572 322 832 500 428 572 347 347 577 619 655 266 227 347 375 497 780 780 780 429 633 633 633 633 633 633 873 631 556 556 556 556 279 279 279 279 722 754 779 779 779 779 779 572 779 728 728 728 728 560 611 622 556 556 556 556 556 556 858 476 561 561 561 561 253 253 253 253 596 614 604 604 604 604 604 572 604 614 614 614 614 504 613 504 ]');
-                // this._put('endobj');
-
-                // Descriptor
-                // this._newobj();
-                // let fontDescriptor = `<</Type /FontDescriptor /FontName /${fontName}`;
-                // if(font.fontMetrics.ascender) {
-                //     fontDescriptor += ` /Ascent ${font.fontMetrics.ascender}`;
-                // }
-                // if(font.fontMetrics.descender) {
-                //     fontDescriptor += ` /Descent ${font.fontMetrics.descender}`;
-                // }
-                // if(font.fontMetrics.flags) {
-                //     fontDescriptor += ` /Flags ${font.fontMetrics.flags}`;
-                // }
-                // if(font.fontMetrics.capHeight) {
-                //     fontDescriptor += ` /CapHeight ${font.fontMetrics.capHeight}`;
-                // }
-                // if(font.fontMetrics.italicAngle) {
-                //     fontDescriptor += ` /ItalicAngle ${font.fontMetrics.italicAngle}`;
-                // }
-                // if(font.fontMetrics.fontBBox) {
-                //     fontDescriptor += ` /FontBBox [${font.fontMetrics.fontBBox[0]} ${font.fontMetrics.fontBBox[1]} ${font.fontMetrics.fontBBox[2]} ${font.fontMetrics.fontBBox[3]}]`;
-                // }
-                // fontDescriptor += ` /FontFile2 ${font.fileObjectNumber} 0 R`;
-                // fontDescriptor += '>>';
-                // this._put(fontDescriptor);
-                // this._put('endobj');
             }
         }
     }
