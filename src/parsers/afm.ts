@@ -70,7 +70,7 @@ export class Parser {
 
 
     parse(fontName: string) {
-        const filename = `./fonts/standard/${fontName}.afm`;
+        const filename = `./fonts/standard-afm/${fontName}.afm`;
         var lineReader = readline.createInterface({
             input: require('fs').createReadStream(filename)
         });
