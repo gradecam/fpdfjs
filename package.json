@@ -1,0 +1,23 @@
+{
+  "name": "fpdfjs",
+  "version": "0.0.1",
+  "description": "Fast, simple PDF generation in TypeScript",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --project .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^8.0.27",
+    "ts-node": "^3.3.0",
+    "typescript": "^2.4.2"
+  },
+  "dependencies": {
+    "@types/opentype.js": "0.0.0",
+    "arraybuffer-to-buffer": "0.0.4",
+    "opentype.js": "^0.7.3"
+  }
+}
