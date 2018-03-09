@@ -1,0 +1,2 @@
+- organize the $ methods by operator class (see table 4.1 Operator categories in the PDF 1.4 spec)
+- add more comments explaning the PDF internals stuff. include references to the spec as much as possible
