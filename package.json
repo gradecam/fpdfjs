@@ -24,8 +24,8 @@
     "@types/node": "^8.0.27",
     "opentype.js": "^0.7.3"
   },
-  "repository" : {
-    "type" : "git",
-    "url" : "https://github.com/gradecam/fpdfjs.git"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gradecam/fpdfjs.git"
   }
 }
