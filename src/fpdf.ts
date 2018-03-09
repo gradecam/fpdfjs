@@ -2,6 +2,18 @@ import * as fs from 'fs';
 import * as zlib from 'zlib';
 import * as font from './font';
 
+export type LineCapStyle = 'BUTT' | 'ROUND' | 'SQUARE';
+export type RuleValue = "even-odd" | "evenodd" | "non-zero" | "nonzero";
+
+const KAPPA = 4.0 * ((Math.sqrt(2) - 1.0) / 3.0);
+
+interface Transform {
+    scalex: number;
+    scaley: number;
+    originx: number;
+    originy: number;
+}
+
 interface FontRef {
     font: font.Font;
     index: number;
@@ -11,17 +23,63 @@ interface FontRef {
     subsettedCompressedFileData?: Buffer;
 }
 
+export interface DrawOpts {
+    fill?: boolean;
+    stroke?: boolean;
+}
+
+export interface ScaleOpts {
+    origin?: {
+        x: number;
+        y:number;
+    }
+}
+
 export interface TextOptions {
     width?: number;
     align?: 'right' | string;
     characterSpacing?: number;
 }
 
-export type LineCapStyle = 'BUTT' | 'ROUND' | 'SQUARE';
-const KAPPA = 4.0 * ((Math.sqrt(2) - 1.0) / 3.0);
-
 function formatFloat(value: number): string {
     return value.toFixed(3);
+}
+
+function pad(s: number | string, length: number) {
+    return (Array(length + 1).join('0') + s).slice(-length);
+}
+
+function windingRule(rule?: RuleValue): string {
+    if(rule && /even-?odd/.test(rule)) {
+      return '*';
+    }
+    return '';
+}
+
+class PdfObject {
+    objectNumber: number;
+    offset: number;
+
+    constructor(objectNumber: number, offset: number) {
+        this.objectNumber = objectNumber;
+        this.offset = offset;
+    }
+}
+
+class Pen {
+    lineWidth = 0.567;
+}
+
+export class Page {
+    width: number;
+    height: number;
+    objectNumber: number | undefined;
+    buffer = '';
+
+    constructor(width: number, height: number) {
+        this.width = width;
+        this.height = height;
+    }
 }
 
 export class FPdf {
@@ -72,21 +130,11 @@ export class FPdf {
         legal: {width: 612, height: 1008},
     }
 
-    get currentFontMetrics() {
-        const currentFont = this._chosenFont;
-        return {
-            ascender: currentFont.fontMetrics.ascender / 1000 * this._chosenFontSize,
-            descender: currentFont.fontMetrics.descender / 1000 * this._chosenFontSize,
-            gap: 0,
-            lineHeight: (currentFont.fontMetrics.ascender - currentFont.fontMetrics.descender) / 1000 * this._chosenFontSize
-        };
-    }
-
-    get _currentPage() {
+    private get _currentPage() {
         return this._pages[this._pages.length - 1];
     }
 
-    get _chosenFont(): font.Font {
+    private get _chosenFont(): font.Font {
         if(!this._fonts[this._chosenFontKey]) {
             // We should only get in here if setFont has never been called
             // and _chosenFontKey is thus still the default (Helvetica)
@@ -95,6 +143,16 @@ export class FPdf {
         }
 
         return this._fonts[this._chosenFontKey].font;
+    }
+
+    get currentFontMetrics() {
+        const currentFont = this._chosenFont;
+        return {
+            ascender: currentFont.fontMetrics.ascender / 1000 * this._chosenFontSize,
+            descender: currentFont.fontMetrics.descender / 1000 * this._chosenFontSize,
+            gap: 0,
+            lineHeight: (currentFont.fontMetrics.ascender - currentFont.fontMetrics.descender) / 1000 * this._chosenFontSize
+        };
     }
 
     close() {
@@ -113,18 +171,29 @@ export class FPdf {
         // FIXME: we should do this how we do everything else with a proper $w
         // and then a proper setLineWidth function
         this._putToCurrentPage(`${formatFloat(this._pen.lineWidth)} w`);
+
+        // set the PDF origin to the top left corner of the page
+        // we then multiply all y coordinates by -1 in _transformPoint
+        // combined these allow us to start at the top and move to the bottom
+        // with higher y values moving you down the page
+        this.$cm(1, 0, 0, 1, 0, this._currentPage.height);
     }
 
     strokeColor(red: number, green: number, blue: number) {
         this.$strokeColor(red/255, green/255, blue/255);
     }
 
+    // FIXME: this should accept an optional TextOptions paramater and take into account some text options such as character spacing
     getTextWidth(text: string): number {
         if(!this._chosenFont || !this._chosenFontSize) {
             throw new Error("getStringWidth: A font and size must be set before measuring text");
         }
 
         return this._chosenFont.getTextWidth(text, this._chosenFontSize);
+    }
+
+    getTextHeight(): number {
+        return this._chosenFont.fontMetrics.lineHeight || 0;
     }
 
     drawOptsToPdfOp(opts?: DrawOpts): string {
@@ -155,6 +224,11 @@ export class FPdf {
         return this;
     }
 
+    clip(rule?: RuleValue) {
+        this.$W(rule);
+        this.$n();
+    }
+
     /**
      * Stream out a description of a rectangle to the PDF. Nothing will actually be drawn until
      * a fill or stroke command goes out after it
@@ -178,7 +252,6 @@ export class FPdf {
      * @param h The height of the rectangle
      */
     roundedRect(x: number, y: number, w: number, h: number, r: number = 0): FPdf {
-        // ({x, y} = this._transformPoint(x, y));
         r = Math.min(r, 0.5 * w, 0.5 * h);
         const c = r * (1.0 - KAPPA);
         this.moveTo(x + r, y);
@@ -192,7 +265,6 @@ export class FPdf {
         this.bezierCurveTo(x, y + c, x + c, y, x + r, y);
         this.closePath();
 
-        // @closePath()
         return this;
     }
 
@@ -223,11 +295,56 @@ export class FPdf {
         return this;
     }
 
+    /**
+     * Transform given coordinates and draw a bezier curve with them
+
+     * @param {number} cp1x handle control point 1 x coordinate
+     * @param {number} cp1y handle control point 1 y coordinate
+     * @param {number} cp2x handle control point 2 x coordinate
+     * @param {number} cp2y handle control point 2 y coordinate
+     * @param {number} x    final vector point x coordinate
+     * @param {number} y    final vector point y coordinate
+     */
     bezierCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void {
         ({x: cp1x, y: cp1y} = this._transformPoint(cp1x, cp1y));
         ({x: cp2x, y: cp2y} = this._transformPoint(cp2x, cp2y));
         ({x, y} = this._transformPoint(x, y));
         this.$c(cp1x, cp1y, cp2x, cp2y, x, y);
+    }
+
+    /**
+     * Modify the current transformation matrix
+     * @param {number} m11 can be used for scaling the x axis or for rotations
+     * @param {number} m12 can be used for skew or for rotation
+     * @param {number} m21 can be used for skew or for rotation
+     * @param {number} m22 can be used for scaling the y axis or for rotations
+     * @param {number} dx  moves the x coordinate of the origin
+     * @param {number} dy  moves the y coordinate of the origin
+     */
+    transform(m11: number, m12: number, m21: number, m22: number, dx: number, dy: number): void {
+        ({x: dx, y: dy} = this._transformPoint(dx, dy));
+        const scalex = m11;
+        const scaley = m22;
+        const originx = dx;
+        const originy = dy;
+        this.$cm(scalex, m12, m21, scaley, originx, originy);
+    }
+
+    scale(scalex: number, scaley?: number | ScaleOpts, options?: ScaleOpts) {
+        if(typeof scaley == 'object') {
+            options = scaley;
+            scaley = scalex;
+        } else if (typeof scaley == 'undefined') {
+            scaley = scalex;
+        }
+
+        let originx = 0;
+        let originy = 0;
+        if(options && options.origin) {
+            originx = options.origin.x - (scalex * options.origin.x);
+            originy = options.origin.y - (scaley * options.origin.y);
+        }
+        this.transform(scalex, 0, 0, scaley, originx, originy);
     }
 
     lineWidth(width: number): void {
@@ -272,8 +389,44 @@ export class FPdf {
         this._putToCurrentPage(`${formatFloat(x)} ${formatFloat(y)} l`);
     }
 
+    $W(rule?: RuleValue): void {
+        this._putToCurrentPage(`W${windingRule(rule)}`);
+    }
+
+    /**
+     * End the path object without filling or stroking it. This operator is a “path-painting no-op,”
+     * used primarily for the side effect of changing the current clipping path
+     */
+    $n(): void {
+        this._putToCurrentPage(`n`);
+    }
+
+    /**
+     * draw a bezier curve with the given coordinates
+     *
+     * @param {number} cp1x handle control point 1 x coordinate
+     * @param {number} cp1y handle control point 1 y coordinate
+     * @param {number} cp2x handle control point 2 x coordinate
+     * @param {number} cp2y handle control point 2 y coordinate
+     * @param {number} x    final vector point x coordinate
+     * @param {number} y    final vector point y coordinate
+     */
     $c(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number) {
         this._putToCurrentPage(`${formatFloat(cp1x)} ${formatFloat(cp1y)} ${formatFloat(cp2x)} ${formatFloat(cp2y)} ${formatFloat(x)} ${formatFloat(y)} c`);
+    }
+
+    /**
+     * Modify the current transformation matrix
+     *
+     * @param {number} cp1x [description]
+     * @param {number} cp1y [description]
+     * @param {number} cp2x [description]
+     * @param {number} cp2y [description]
+     * @param {number} x    [description]
+     * @param {number} y    [description]
+     */
+    $cm(m11: number, m12: number, m21: number, m22: number, dx: number, dy: number) {
+        this._putToCurrentPage(`${formatFloat(m11)} ${formatFloat(m12)} ${formatFloat(m21)} ${formatFloat(m22)} ${formatFloat(dx)} ${formatFloat(dy)} cm`);
     }
 
     $h(): void {
@@ -466,19 +619,6 @@ export class FPdf {
         }
     }
 
-    /**
-     * The native PDF coordinate system sets the origin at the bottom left corner of the page
-     * It is more intuitive to construct PDFs by starting with the top as y = 0 with postitive y
-     * values moving you down the page. This method transforms coordinates from the convient form
-     * to the PDF native form
-     * 
-     * @param {number} x The x coordinate
-     * @param {number} y The y coordinate (At the top of the page y=0. Moving down the page y gets larger)
-     */
-    _transformPoint(x: number, y: number): {x: number; y: number} {
-        return {x, y: this._currentPage.height - y};
-    }
-
     output(filename?: string) {
         this.close();
         if(filename) {
@@ -497,7 +637,20 @@ export class FPdf {
         return this._buffer;
     }
 
-    _getFontKey(family: string, style: string): string {
+    /**
+     * The native PDF coordinate system sets the origin at the bottom left corner of the page
+     * It is more intuitive to construct PDFs by starting with the top as y = 0 with postitive y
+     * values moving you down the page. This method transforms coordinates from the convient form
+     * to the PDF native form
+     * 
+     * @param {number} x The x coordinate
+     * @param {number} y The y coordinate (At the top of the page y=0. Moving down the page y gets larger)
+     */
+    private _transformPoint(x: number, y: number): {x: number; y: number} {
+        return {x, y: y * -1};
+    }
+
+    private _getFontKey(family: string, style: string): string {
         // normalize the family name
         family = family.toLowerCase().replace(' ', '');
         // normalize the style string
@@ -508,7 +661,7 @@ export class FPdf {
         return `${family}${style}`;
     }
 
-    _getpagesize(size: string): {width: number; height: number} {
+    private _getpagesize(size: string): {width: number; height: number} {
         if(typeof size == 'string') {
             size = size.toLowerCase();
             if(!this._standardPageSizes[size]) {
@@ -521,7 +674,7 @@ export class FPdf {
         }
     }
 
-    _beginpage(size?: string, orientation?: any, rotation?: any) {
+    private _beginpage(size?: string, orientation?: any, rotation?: any) {
         this._currentFontKey = null;
 
         let pageDimensions;
@@ -537,7 +690,7 @@ export class FPdf {
     /**
      * Begins a new object
      */
-    _newobj(objectNumber?: number): number {
+    private _newobj(objectNumber?: number): number {
         if(objectNumber === undefined) {
             objectNumber = ++this._currentObjectNumber;
         }
@@ -549,26 +702,26 @@ export class FPdf {
         return objectNumber;
     }
 
-    _getoffset() {
+    private _getoffset() {
         return this._buffer.length;
     }
 
     /**
      * _put actually appends the string to the buffer
      */
-    _put(s: string) {
+    private _put(s: string) {
         this._buffer += s + "\n";
     }
 
-    _putToCurrentPage(s: string) {
+    private _putToCurrentPage(s: string) {
         this._putToPage(s, this._pages.length - 1);
     }
 
-    _putToPage(s: string, pageNumber: number) {
+    private _putToPage(s: string, pageNumber: number) {
         this._pages[pageNumber].buffer += s + "\n";
     }
 
-    _putresources() {
+    private _putresources() {
         this._putfonts();
         this._newobj(2);
         this._put('<<');
@@ -577,7 +730,7 @@ export class FPdf {
         this._put('endobj');
     }
 
-    _putresourcedict()
+    private _putresourcedict()
     {
         this._put('/ProcSet [/PDF /Text /ImageB /ImageC /ImageI]');
         this._put('/Font <<');
@@ -590,7 +743,7 @@ export class FPdf {
         this._put('>>');
     }
 
-    _putinfo()
+    private _putinfo()
     {
         this._metadata.push({name: 'Producer', value: `FPdf.js`});
         this._metadata.push({name: 'CreationDate', value: this._formatDate(new Date)});
@@ -599,11 +752,11 @@ export class FPdf {
         }
     }
 
-    _formatDate(date: Date) {
+    private _formatDate(date: Date) {
         return `D:${pad(date.getUTCFullYear(), 4)}${pad(date.getUTCMonth() + 1, 2)}${pad(date.getUTCDate(), 2)}${pad(date.getUTCHours(), 2)}${pad(date.getUTCMinutes(), 2)}${pad(date.getUTCMinutes(), 2)}${pad(date.getUTCSeconds(), 2)}Z`;
     }
 
-    _enddoc() {
+   private _enddoc() {
         this._putheader();
         this._putpages();
 
@@ -646,24 +799,24 @@ export class FPdf {
         this._put('%%EOF');
     }
 
-    _putcatalog()
+    private _putcatalog()
     {
         this._put('/Type /Catalog');
         this._put('/Pages 1 0 R');
     }
 
 
-    _putheader() {
+    private _putheader() {
         this._put(`%PDF-${this.pdfVersion}`)
     }
 
-    _puttrailer() {
+    private _puttrailer() {
         this._put(`/Size ${this._objects.length + 1}`);
         this._put(`/Root ${this._objects.length} 0 R`);
         this._put(`/Info ${this._objects.length - 1} 0 R`);
     }
 
-    _putpages() {
+    private _putpages() {
         for(const page of this._pages) {
             this._putpage(page);
         }
@@ -685,7 +838,7 @@ export class FPdf {
         this._put('endobj');
     }
 
-    _putpage(page: Page) {
+    private _putpage(page: Page) {
         this._newobj();
         page.objectNumber = this._currentObjectNumber;
         this._put('<</Type /Page');
@@ -697,7 +850,7 @@ export class FPdf {
         this._putstreamobject(page.buffer);
     }
 
-    _putfonts() {
+    private _putfonts() {
         for(let fontKey of Object.keys(this._fonts)) {
             const fontRef = this._fonts[fontKey];
             if(fontRef.font.type == 'Standard') { continue; }
@@ -875,7 +1028,7 @@ export class FPdf {
     }
 
 
-    _putstreamobject(data: string) {
+    private _putstreamobject(data: string) {
         let entries = `/Length ${data.length}`;
         this._newobj();
         this._put(`<<${entries}>>`);
@@ -883,44 +1036,9 @@ export class FPdf {
         this._put('endobj');
     }
 
-    _putstream(data: string) {
+    private _putstream(data: string) {
         this._put('stream');
         this._put(data);
         this._put('endstream');
     }
-}
-
-export class Page {
-    width: number;
-    height: number;
-    objectNumber: number | undefined;
-    buffer = '';
-
-    constructor(width: number, height: number) {
-        this.width = width;
-        this.height = height;
-    }
-}
-
-export interface DrawOpts {
-    fill?: boolean;
-    stroke?: boolean;
-}
-
-function pad(s: number | string, length: number) {
-    return (Array(length + 1).join('0') + s).slice(-length);
-}
-
-class PdfObject {
-    objectNumber: number;
-    offset: number;
-
-    constructor(objectNumber: number, offset: number) {
-        this.objectNumber = objectNumber;
-        this.offset = offset;
-    }
-}
-
-class Pen {
-    lineWidth = 0.567;
 }
