@@ -22,7 +22,6 @@
   "dependencies": {
     "@types/opentype.js": "0.0.0",
     "@types/node": "^8.0.27",
-    "arraybuffer-to-buffer": "0.0.4",
     "opentype.js": "^0.7.3"
   }
 }
