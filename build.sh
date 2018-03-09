@@ -1,4 +1,4 @@
 #!/bin/sh
-tsc -p .
+./node_modules/typescript/bin/tsc -p .
 mkdir -p dist/fonts
 cp -a fonts/standard-json dist/fonts/

@@ -2,19 +2,22 @@
   "name": "fpdfjs",
   "version": "0.1.5",
   "description": "Fast, simple PDF generation in TypeScript",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "scripts": {
-    "prepublish": "./build.sh",
+    "prepublishOnly": "./build.sh",
     "build": "./build.sh",
+    "watch": "tsc -w",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "ts-node": "^3.3.0",
-    "typescript": "^2.4.2"
+    "typescript": "^2.7.2"
   },
   "dependencies": {
     "@types/opentype.js": "0.0.0",
