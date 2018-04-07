@@ -1,2 +1,10 @@
 - organize the $ methods by operator class (see table 4.1 Operator categories in the PDF 1.4 spec)
 - add more comments explaning the PDF internals stuff. include references to the spec as much as possible
+- better support for specifying and change page sizes
+- image handling
+- browser support
+- switch from using strings to ArrayBuffers everywhere
+- allow streaming of the PDF before it's closed
+- allow switching to old pages for non-streaming PDFs
+- create classes for different kinds of objects that generate the PDF commands themselves
+- create an online demo page that loads a custom font from a URL
