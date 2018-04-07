@@ -37,7 +37,7 @@ export interface ScaleOpts {
 
 export interface TextOptions {
     width?: number;
-    align?: 'right' | string;
+    align?: 'right' | 'center' | string;
     characterSpacing?: number;
 }
 
@@ -180,16 +180,17 @@ export class FPdf {
     }
 
     strokeColor(red: number, green: number, blue: number) {
-        this.$strokeColor(red/255, green/255, blue/255);
+        this.$RG(red/255, green/255, blue/255);
     }
 
     // FIXME: this should accept an optional TextOptions paramater and take into account some text options such as character spacing
-    getTextWidth(text: string): number {
+    getTextWidth(text: string, opts: TextOptions = {}): number {
         if(!this._chosenFont || !this._chosenFontSize) {
             throw new Error("getStringWidth: A font and size must be set before measuring text");
         }
 
-        return this._chosenFont.getTextWidth(text, this._chosenFontSize);
+        const characterSpacingExtraSpace = opts.characterSpacing ? opts.characterSpacing * text.length : 0;
+        return this._chosenFont.getTextWidth(text, this._chosenFontSize) + characterSpacingExtraSpace;
     }
 
     getTextHeight(): number {
@@ -487,7 +488,7 @@ export class FPdf {
         this._putToCurrentPage(op);
     }
 
-    $strokeColor(red: number, green: number, blue: number): void {
+    $RG(red: number, green: number, blue: number): void {
         this._putToCurrentPage(`${red.toFixed(3)} ${green.toFixed(3)} ${blue.toFixed(3)} RG `);
     }
 
@@ -539,7 +540,7 @@ export class FPdf {
         size = size || this._chosenFontSize;
 
         // if this is already the current font just bail
-        if(fontKey == this._currentFontKey && size == this._currentFontSize) {
+        if(fontKey == this._chosenFontKey && size == this._chosenFontSize) {
             return;
         }
 
@@ -588,8 +589,11 @@ export class FPdf {
         ({x, y} = this._transformPoint(x, y));
 
         if(opts.align == 'right' && opts.width) {
-            const textWidth = this.getTextWidth(text);
+            const textWidth = this.getTextWidth(text, opts);
             x = x + opts.width - textWidth;
+        } else if(opts.align == 'center' && opts.width) {
+            const textWidth = this.getTextWidth(text, opts);
+            x = x + ((opts.width - textWidth) / 2);
         }
 
         this._putToCurrentPage('BT');
