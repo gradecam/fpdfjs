@@ -599,7 +599,14 @@ export class FPdf {
         y -= this._chosenFont.fontMetrics.ascender * this._chosenFontSize / 1000;
 
         // if this is the first BT/ET item for a the _chosenFont then we need to output that Tf command
-        if(this._chosenFontKey && (this._chosenFontSize != this._currentFontSize || this._chosenFontKey != this._currentFontKey)) {
+        // if(this._chosenFontKey && (this._chosenFontSize != this._currentFontSize || this._chosenFontKey != this._currentFontKey)) {
+        // FIXME: doing this selectively is more complex than the logic in the live above
+        //        because save (q) and restore (Q) also affect the state, these variables can't
+        //        completely capture what's needed. If we decide to always include the font and size then 
+        //        we don't need two separate variables to track this state (chosen vs current)
+        //        If we want to try to avoid /F Tf calls however we may need to take that into account.
+        //        As it stands now the _current* vars basically don't do anything
+        if(true) {
             const formattedFontSize = formatFloat(this._chosenFontSize);
             this._putToCurrentPage(`/F${this._fonts[this._chosenFontKey].index} ${formattedFontSize} Tf`);
             this._currentFontSize = this._chosenFontSize;
