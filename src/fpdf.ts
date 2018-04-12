@@ -206,7 +206,7 @@ export class FPdf {
     }
 
     getTextHeight(): number {
-        return this._chosenFont.fontMetrics.lineHeight || 0;
+        return this.currentFontMetrics.lineHeight;
     }
 
     drawOptsToPdfOp(opts?: DrawOpts): string {
