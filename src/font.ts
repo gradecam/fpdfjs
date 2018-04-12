@@ -206,7 +206,6 @@ export interface FontMetrics {
     italicAngle?: number;
     fontBBox?: number[];
     gap?: number;
-    lineHeight?: number;
     missingWidth?: number;
     stemV?: number;
     unitsPerEm?: number;
