@@ -725,6 +725,9 @@ export class FPdf {
     }
 
     private _putToCurrentPage(s: string) {
+        if(this._pages.length == 0) {
+            this.addPage();
+        }
         this._putToPage(s, this._pages.length - 1);
     }
 
