@@ -41,6 +41,18 @@ export interface TextOptions {
     characterSpacing?: number;
 }
 
+export interface DashOptions {
+    space?: number;
+    phase?: number;
+}
+
+export interface RotateOptions {
+    origin?: {
+        x: number;
+        y:number;
+    }
+}
+
 function formatFloat(value: number): string {
     return value.toFixed(3);
 }
@@ -357,6 +369,25 @@ export class FPdf {
             originy = options.origin.y - (scaley * options.origin.y);
         }
         this.transform(scalex, 0, 0, scaley, originx, originy);
+    }
+
+    rotate(angle: number, options: RotateOptions) {
+        const radians = angle * Math.PI / 180;
+        const cos = Math.cos(radians);
+        const sin = -Math.sin(radians);
+        let x = 0;
+        let y = 0;
+
+        if(options.origin) {
+            ({x, y} = options.origin);
+            ({x, y} = this._transformPoint(x, y));
+            const x1 = x * cos - y * sin;
+            const y1 = x * sin + y * cos;
+            x -= x1;
+            y -= y1;
+        }
+        ({x, y} = this._transformPoint(x, y));
+        this.transform(cos, sin, sin*-1, cos, x, y);
     }
 
     lineWidth(width: number): void {
