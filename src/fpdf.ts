@@ -296,6 +296,17 @@ export class FPdf {
         return this;
     }
 
+    dash(length: number | number[], options: DashOptions = {}): FPdf {
+        const lengths = Array.isArray(length) ? length : [length];
+        this.$d(lengths, options)
+        return this;
+    }
+
+    undash(): FPdf {
+        this.$d([])
+        return this;
+    }
+
     /**
      * Transform given coordinates and draw a bezier curve with them
 
@@ -489,7 +500,20 @@ export class FPdf {
     }
 
     $RG(red: number, green: number, blue: number): void {
-        this._putToCurrentPage(`${red.toFixed(3)} ${green.toFixed(3)} ${blue.toFixed(3)} RG `);
+        this._putToCurrentPage(`${formatFloat(red)} ${formatFloat(green)} ${formatFloat(blue)} RG `);
+    }
+
+    $d(lengths: number[], options: DashOptions = {}): void {
+        const phase = options.phase || 0;
+        if(lengths.length == 0) {
+            this._putToCurrentPage(`[] 0 d`);
+        } else if(lengths.length == 1) {
+            const space = options.space || lengths[0];
+            this._putToCurrentPage(`[${formatFloat(lengths[0])} ${formatFloat(space)}] ${formatFloat(phase)} d`);
+        } else {
+            const lengthsString = lengths.map(l => formatFloat(l)).join(' ');
+            this._putToCurrentPage(`[${lengthsString}] ${formatFloat(phase)} d`);
+        }
     }
 
     /**
