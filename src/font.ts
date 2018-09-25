@@ -3,6 +3,10 @@ import * as OpenType from './parsers/opentype';
 import * as opentype from 'opentype.js';
 
 export type FontType = 'Standard' | 'Type1' | 'TrueType';
+const leftParenCode = 40;
+const rightParenCode = 41;
+const backslashCode = 92;
+
 
 export class Font {
     type: FontType;
@@ -114,12 +118,25 @@ export class Font {
     encodeText(s: string) {
         // convert the javascript string, which uses little-endian encoded UTF16,
         // into big-endian UTF16 with the PDF spec requires for multi-byte fonts
-        const buffer = new Int8Array(s.length*2);
+        // 
+        // we start by overprovisioning the array in case we need to escape any '(', ')', or '\'
+        const overBuffer = new Int8Array(s.length*4);
+        let byteNumber = 0;
         for(let i = 0; i < s.length; i++) {
             const codePoint = s.charCodeAt(i);
-            buffer[i*2] = codePoint >> 8;
-            buffer[i*2+1] = codePoint & 255;
+            const highByte = codePoint >> 8;
+            const lowByte = codePoint & 255;
+            if(highByte == leftParenCode || highByte == rightParenCode || highByte == backslashCode) {
+                overBuffer[byteNumber++] = backslashCode;    
+            }
+            overBuffer[byteNumber++] = highByte;
+            if(lowByte == leftParenCode || lowByte == rightParenCode || lowByte == backslashCode) {
+                overBuffer[byteNumber++] = backslashCode;    
+            }
+            overBuffer[byteNumber++] = lowByte;
         }
+        // now truncate the array to only include the bytes we actually filled in
+        const buffer = overBuffer.slice(0, byteNumber);
         // FIXME: this should be updated to not use nodejs Buffer objects
         //        so it can be used unmodified in the browser
         return (new Buffer(buffer.buffer)).toString('binary');
