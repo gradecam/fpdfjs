@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import * as OpenType from './parsers/opentype';
 import * as opentype from 'opentype.js';
 
@@ -171,13 +172,13 @@ export class StandardFont extends Font {
      * @param {CMAPData} cmapData [description]
      */
     constructor(familyName: StandardFontFamilyName, variant?: FontVariant) {
-        const filename = `fonts/standard-json/${familyName}.afm.json`;
+        const filename = path.join(__dirname, `../fonts/standard-json/${familyName}.afm.json`);;
         const afmString = fs.readFileSync(filename, {encoding: 'utf8'});
         const afmData: AFMData = JSON.parse(afmString);
 
         // lazy load the standard Adobe CMAP so you don't have to take the hit if you never use any standard fonts
         if(!adobeStandardEncoding) {
-            const adobeStandardEncodingString = fs.readFileSync('fonts/adobe-standard-encoding.cmap.json', {encoding: 'utf8'});
+            const adobeStandardEncodingString = fs.readFileSync(path.join(__dirname, '../fonts/adobe-standard-encoding.cmap.json'), {encoding: 'utf8'});
             adobeStandardEncoding = JSON.parse(adobeStandardEncodingString);
         }
 
