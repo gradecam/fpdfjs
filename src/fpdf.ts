@@ -891,7 +891,7 @@ export class FPdf {
 
             const subsettedArrayBuffer = fontRef.font.getEmbeddableFontBuffer();
             fontRef.subsettedUncompressedFileSize = subsettedArrayBuffer.byteLength;
-            fontRef.subsettedCompressedFileData = zlib.deflateSync(new Buffer(subsettedArrayBuffer));
+            fontRef.subsettedCompressedFileData = zlib.deflateSync(Buffer.from(subsettedArrayBuffer));
 
             fontRef.fileObjectNumber = this._newobj();
             this._put(`<</Length ${fontRef.subsettedCompressedFileData.byteLength}`);
@@ -1028,7 +1028,7 @@ export class FPdf {
                     cidtogidmap[charCode*2+1] = <any>glyphId & 0xFF;
                     // i++;
                 }
-                const compressedCidToGidMap = zlib.deflateSync(new Buffer(cidtogidmap.buffer));
+                const compressedCidToGidMap = zlib.deflateSync(Buffer.from(cidtogidmap.buffer));
                 const compressedString = compressedCidToGidMap.toString('binary');
                 this._newobj();
                 this._put(`<</Length ${compressedCidToGidMap.byteLength}`);

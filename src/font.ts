@@ -140,7 +140,7 @@ export class Font {
         const buffer = overBuffer.slice(0, byteNumber);
         // FIXME: this should be updated to not use nodejs Buffer objects
         //        so it can be used unmodified in the browser
-        return (new Buffer(buffer.buffer)).toString('binary');
+        return (Buffer.from(buffer.buffer)).toString('binary');
     }
 }
 
