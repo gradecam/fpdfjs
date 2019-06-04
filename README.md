@@ -27,3 +27,13 @@ See `bin/examples`
 ## What's not Done
 
 * Lots and lots of stuff
+
+## Development
+
+### Building
+
+```
+./bin/build-standard-fonts.sh (one time)
+npm run build (to do a full build)
+npm run watch (to watch and build continuously)
+```
