@@ -84,6 +84,14 @@ export class FPdf {
         a5: {width: 420.94, height: 595.28},
         letter: {width: 612, height: 792},
         legal: {width: 612, height: 1008},
+    };
+    private _originAdjustmentMethod: OriginAdjustmentChoices;
+
+    constructor(opts?: PdfOpts) {
+        opts = opts || {};
+        opts.originAdjustment = opts.originAdjustment === undefined ? OriginAdjustmentChoices.shift : opts.originAdjustment;
+        this._originAdjustmentMethod = opts.originAdjustment == true ? OriginAdjustmentChoices.shift :
+            opts.originAdjustment == false ? OriginAdjustmentChoices.none : opts.originAdjustment;
     }
 
     private get _currentPage() {
@@ -128,11 +136,17 @@ export class FPdf {
         // and then a proper setLineWidth function
         this._putToCurrentPage(`${formatFloat(this._pen.lineWidth)} w`);
 
-        // set the PDF origin to the top left corner of the page
-        // we then multiply all y coordinates by -1 in _transformPoint
-        // combined these allow us to start at the top and move to the bottom
-        // with higher y values moving you down the page
-        this.$cm(1, 0, 0, 1, 0, this._currentPage.height);
+        if (this._originAdjustmentMethod == OriginAdjustmentChoices.shift) {
+            // Set the PDF origin to the top left corner of the page.
+            // We then multiply all y coordinates by -1 in _transformPoint.
+            // Combined these allow us to start at the top and move to the bottom
+            // with higher y values moving you down the page
+            this.$cm(1, 0, 0, 1, 0, this._currentPage.height);
+        } else if (this._originAdjustmentMethod == OriginAdjustmentChoices.none) {
+            // don't do any adjustments, use native PDF coordinates
+        } else if (this._originAdjustmentMethod == OriginAdjustmentChoices.shiftAndFlip) {
+            throw new Error(`OriginAdjustmentChoices.shiftAndFlip is not yet implemented`);
+        }
     }
 
     strokeColor(red: number, green: number, blue: number) {
@@ -657,7 +671,15 @@ export class FPdf {
      * @param {number} y The y coordinate (At the top of the page y=0. Moving down the page y gets larger)
      */
     private _transformPoint(x: number, y: number): {x: number; y: number} {
-        return {x, y: y * -1};
+        if (this._originAdjustmentMethod == OriginAdjustmentChoices.shift) {
+            return {x, y: y * -1};
+        } else if (this._originAdjustmentMethod == OriginAdjustmentChoices.none) {
+            return {x, y};
+        } else if (this._originAdjustmentMethod == OriginAdjustmentChoices.shiftAndFlip) {
+            throw new Error(`OriginAdjustmentChoices.shiftAndFlip is not yet implemented`);
+        }
+
+        throw new Error('Undefined originAdjustmentMethod');
     }
 
     private _getFontKey(family: string, style: string): string {
