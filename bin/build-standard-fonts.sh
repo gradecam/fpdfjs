@@ -1,3 +1,5 @@
+# this should be exectued from the project root directory
+mkdir -p ./fonts/standard-json
 node run.js convert-standard-font Helvetica
 node run.js convert-standard-font Helvetica-Bold
 node run.js convert-standard-font Helvetica-Oblique
