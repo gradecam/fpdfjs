@@ -1,9 +1,24 @@
 import * as fs from 'fs';
 import * as zlib from 'zlib';
 import * as font from './font';
-
-export type LineCapStyle = 'BUTT' | 'ROUND' | 'SQUARE';
-export type RuleValue = "even-odd" | "evenodd" | "non-zero" | "nonzero";
+import {
+    DashOptions,
+    DrawOpts,
+    PdfOpts,
+    OriginAdjustmentChoices,
+    ScaleOpts,
+    TextOptions,
+    RotateOptions,
+} from './interfaces';
+import {
+    PdfObject,
+    Page,
+    Pen,
+    pad,
+    formatFloat,
+    windingRule,
+} from './helpers';
+import { LineCapStyle, RuleValue } from './const';
 
 const KAPPA = 4.0 * ((Math.sqrt(2) - 1.0) / 3.0);
 
@@ -21,77 +36,6 @@ interface FontRef {
     fileObjectNumber?: number;
     subsettedUncompressedFileSize?: number;
     subsettedCompressedFileData?: Buffer;
-}
-
-export interface DrawOpts {
-    fill?: boolean;
-    stroke?: boolean;
-}
-
-export interface ScaleOpts {
-    origin?: {
-        x: number;
-        y:number;
-    }
-}
-
-export interface TextOptions {
-    width?: number;
-    align?: 'right' | 'center' | string;
-    characterSpacing?: number;
-}
-
-export interface DashOptions {
-    space?: number;
-    phase?: number;
-}
-
-export interface RotateOptions {
-    origin?: {
-        x: number;
-        y:number;
-    }
-}
-
-function formatFloat(value: number): string {
-    return value.toFixed(3);
-}
-
-function pad(s: number | string, length: number) {
-    return (Array(length + 1).join('0') + s).slice(-length);
-}
-
-function windingRule(rule?: RuleValue): string {
-    if(rule && /even-?odd/.test(rule)) {
-      return '*';
-    }
-    return '';
-}
-
-class PdfObject {
-    objectNumber: number;
-    offset: number;
-
-    constructor(objectNumber: number, offset: number) {
-        this.objectNumber = objectNumber;
-        this.offset = offset;
-    }
-}
-
-class Pen {
-    lineWidth = 0.567;
-}
-
-export class Page {
-    width: number;
-    height: number;
-    objectNumber: number | undefined;
-    buffer = '';
-
-    constructor(width: number, height: number) {
-        this.width = width;
-        this.height = height;
-    }
 }
 
 export class FPdf {
@@ -1095,7 +1039,6 @@ export class FPdf {
             }
         }
     }
-
 
     private _putstreamobject(data: string) {
         let entries = `/Length ${data.length}`;
