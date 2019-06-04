@@ -20,8 +20,8 @@
     "typescript": "^2.7.2"
   },
   "dependencies": {
+    "@types/node": "^8.10.48",
     "@types/opentype.js": "0.0.0",
-    "@types/node": "^8.0.27",
     "opentype.js": "^0.7.3"
   },
   "repository": {
