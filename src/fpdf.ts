@@ -6,6 +6,7 @@ import {
     DrawOpts,
     PdfOpts,
     OriginAdjustmentChoices,
+    FontSizeSettingMethods,
     ScaleOpts,
     TextOptions,
     RotateOptions,
@@ -86,6 +87,7 @@ export class FPdf {
         legal: {width: 612, height: 1008},
     };
     private _originAdjustmentMethod: OriginAdjustmentChoices;
+    private _fontSizeSettingMethod: OriginAdjustmentChoices;
 
     constructor(opts?: PdfOpts) {
         opts = opts || {};
@@ -360,6 +362,11 @@ export class FPdf {
         this.$h();
     }
 
+    /**
+     * This should probably not have a convenience function like this. Tc should only be used in between beginText and endText.
+     * Calling it in this way at a high level couldn't work.
+     * @param advanceWidth 
+     */
     setCharacterSpacing(advanceWidth: number): void {
         this.$Tc(advanceWidth);
     }
@@ -428,6 +435,20 @@ export class FPdf {
      */
     $cm(m11: number, m12: number, m21: number, m22: number, dx: number, dy: number) {
         this._putToCurrentPage(`${formatFloat(m11)} ${formatFloat(m12)} ${formatFloat(m21)} ${formatFloat(m22)} ${formatFloat(dx)} ${formatFloat(dy)} cm`);
+    }
+
+    /**
+     * Modify the current text matrix
+     *
+     * @param {number} cp1x [description]
+     * @param {number} cp1y [description]
+     * @param {number} cp2x [description]
+     * @param {number} cp2y [description]
+     * @param {number} x    [description]
+     * @param {number} y    [description]
+     */
+    $Tm(m11: number, m12: number, m21: number, m22: number, dx: number, dy: number) {
+        this._putToCurrentPage(`${formatFloat(m11)} ${formatFloat(m12)} ${formatFloat(m21)} ${formatFloat(m22)} ${formatFloat(dx)} ${formatFloat(dy)} Tm`);
     }
 
     $h(): void {
@@ -599,6 +620,8 @@ export class FPdf {
      * @param {TextOptions =    {}}        opts
      */
     text(x: number, y: number, text: string, opts: TextOptions = {}) {
+        opts.fontSizeSettingMethod = opts.fontSizeSettingMethod || FontSizeSettingMethods.setFont;
+
         ({x, y} = this._transformPoint(x, y));
 
         if(opts.align == 'right' && opts.width) {
@@ -615,6 +638,9 @@ export class FPdf {
         // we want to move it down so that the y value given here becomes the the top
         y -= this._chosenFont.fontMetrics.ascender * this._chosenFontSize / 1000;
 
+        if(opts.fontSizeSettingMethod == FontSizeSettingMethods.textMatrix) {
+            this.save();
+        }
         // if this is the first BT/ET item for a the _chosenFont then we need to output that Tf command
         // if(this._chosenFontKey && (this._chosenFontSize != this._currentFontSize || this._chosenFontKey != this._currentFontKey)) {
         // FIXME: doing this selectively is more complex than the logic in the live above
@@ -624,8 +650,11 @@ export class FPdf {
         //        If we want to try to avoid /F Tf calls however we may need to take that into account.
         //        As it stands now the _current* vars basically don't do anything
         if(true) {
-            const formattedFontSize = formatFloat(this._chosenFontSize);
-            this._putToCurrentPage(`/F${this._fonts[this._chosenFontKey].index} ${formattedFontSize} Tf`);
+            if(opts.fontSizeSettingMethod == FontSizeSettingMethods.textMatrix) {
+                this.$Tm(this._chosenFontSize, 0, 0, this._chosenFontSize, x, y);
+            }
+            const formattedFontSize = opts.fontSizeSettingMethod == FontSizeSettingMethods.setFont ? formatFloat(this._chosenFontSize) : 1;
+            this._putToCurrentPage(`/F${this._fonts[this._chosenFontKey].index} ${formattedFontSize} Tf `);
             this._currentFontSize = this._chosenFontSize;
             this._currentFontKey = this._chosenFontKey;
         }
@@ -634,12 +663,18 @@ export class FPdf {
             this.setCharacterSpacing(opts.characterSpacing);
         }
 
-        const s = `${formatFloat(x)} ${formatFloat(y)} Td (${this._encodeText(text)}) Tj ET`;
+        // FIXME: Does it matter that we are doing a Tc (setCharacterSpacing) after the ET?
+        const s = opts.fontSizeSettingMethod == FontSizeSettingMethods.textMatrix ? 
+            `(${this._encodeText(text)}) Tj ET`:
+            `${formatFloat(x)} ${formatFloat(y)} Td (${this._encodeText(text)}) Tj ET`;
         this._putToCurrentPage(s);
         if(opts.characterSpacing) {
             // FIXME: if we tracked this like we do with _chosenFontSize and _chosenFontKey we could eliminate a lot
             // of these, improve performance, and create smaller PDFs
             this.setCharacterSpacing(0);
+        }
+        if(opts.fontSizeSettingMethod == FontSizeSettingMethods.textMatrix) {
+            this.restore();
         }
     }
 

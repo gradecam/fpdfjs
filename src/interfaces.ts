@@ -4,6 +4,11 @@ export enum OriginAdjustmentChoices {
     shiftAndFlip = "shiftAndFlip",
 }
 
+export enum FontSizeSettingMethods {
+    textMatrix = 'textMatrix',
+    setFont = 'setFont',
+}
+
 export interface PdfOpts {
     originAdjustment?: boolean | OriginAdjustmentChoices;
 }
@@ -24,6 +29,7 @@ export interface TextOptions {
     width?: number;
     align?: 'right' | 'center' | string;
     characterSpacing?: number;
+    fontSizeSettingMethod?: FontSizeSettingMethods;
 }
 
 export interface DashOptions {
