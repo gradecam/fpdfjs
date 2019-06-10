@@ -1,6 +1,6 @@
 {
   "name": "fpdfjs",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Fast, simple PDF generation in TypeScript",
   "files": [
     "dist"
